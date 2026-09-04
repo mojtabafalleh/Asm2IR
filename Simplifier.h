@@ -43,6 +43,13 @@ private:
             simplify_expr(store->value);
             return;
         }
+
+        if (auto* cjump = dynamic_cast<ConditionalJumpStatement*>(stmt)) {
+            simplify_expr(cjump->condition);
+            return;
+        }
+
+        // Jump / Call / Return / Interrupt carry no expressions to simplify.
     }
 
     // Recursively simplifies `expr` in place. `expr` is passed as

@@ -1,3 +1,4 @@
+// Lifter.h
 #pragma once
 
 #include <capstone/capstone.h>
@@ -10,11 +11,10 @@
 #include <iostream>
 
 class Lifter;
-
 class InstructionHandler {
 public:
     virtual ~InstructionHandler() = default;
-    virtual void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const = 0;
+    virtual void lift(const cs_x86& x86, Lifter& lifter, IR& ir, uint64_t fallthrough) const = 0;
 };
 
 class Lifter {
@@ -22,7 +22,6 @@ public:
     Lifter() {
         if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK)
             throw std::runtime_error("capstone initialization failed");
-
         cs_option(handle, CS_OPT_DETAIL, CS_OPT_ON);
         register_handlers();
     }
@@ -75,49 +74,61 @@ public:
         switch (op.type) {
         case X86_OP_REG:
             return std::make_unique<RegValue>(reg(op.reg), static_cast<uint8_t>(op.size * 8));
-
         case X86_OP_IMM:
             return std::make_unique<ImmValue>(op.imm);
-
         case X86_OP_MEM: {
             auto& mem = op.mem;
             std::unique_ptr<Value> base;
             std::unique_ptr<Value> index;
-
             if (mem.base != X86_REG_INVALID)
                 base = std::make_unique<RegValue>(reg(mem.base));
-
             if (mem.index != X86_REG_INVALID)
                 index = std::make_unique<RegValue>(reg(mem.index));
-
             return std::make_unique<MemoryValue>(op.size, std::move(base), std::move(index), mem.scale, mem.disp);
         }
-
         default:
             throw std::runtime_error("unsupported operand");
         }
     }
 
+    std::unique_ptr<Value> read_reg(Reg r, uint8_t width = 64) {
+        auto it = last_assign.find(r);
+        if (it != last_assign.end()) {
+            return std::make_unique<AssignRef>(it->second);
+        }
+        return std::make_unique<RegValue>(r, width);
+    }
+
+    void new_assign(std::unique_ptr<Value> dst, std::unique_ptr<Expression> value, IR& ir) {
+        uint64_t id = ir.allocate_assign_id();
+        auto assign = std::make_unique<AssignStatement>(id, std::move(dst), std::move(value));
+        if (auto* reg = dynamic_cast<RegValue*>(assign->dst.get())) {
+            last_assign[reg->reg] = id;
+        }
+        ir.add(std::move(assign));
+    }
+
     void emit_assignment_or_store(std::unique_ptr<Value> dst, std::unique_ptr<Expression> src, IR& ir) {
-        if (dst->category() == ExpressionCategory::Memory)
+        if (dst->category() == ExpressionCategory::Memory) {
             ir.add(std::make_unique<StoreStatement>(std::move(dst), std::move(src)));
-        else
-            ir.add(std::make_unique<AssignStatement>(std::move(dst), std::move(src)));
+        } else {
+            new_assign(std::move(dst), std::move(src), ir);
+        }
     }
 
     void emit_binary_operation(const cs_x86& x86, Operation op, IR& ir) {
         auto dst = operand(x86.operands[0]);
         auto src = operand(x86.operands[1]);
-
-        auto expr = std::make_unique<BinaryExpression>(op, dst->clone(), std::move(src));
+        auto left_val = dst->clone();
+        auto expr = std::make_unique<BinaryExpression>(op, std::move(left_val), std::move(src));
         emit_assignment_or_store(std::move(dst), std::move(expr), ir);
     }
 
     void emit_stack_push(std::unique_ptr<Value> src, IR& ir) {
         auto rsp = std::make_unique<RegValue>(Reg::RSP);
         auto sub_expr = std::make_unique<BinaryExpression>(
-            Operation::Sub, rsp->clone(), std::make_unique<ImmValue>(8));
-        emit_assignment_or_store(std::move(rsp), std::move(sub_expr), ir);
+            Operation::Sub, read_reg(Reg::RSP), std::make_unique<ImmValue>(8));
+        new_assign(std::move(rsp), std::move(sub_expr), ir);
 
         auto mem_dst = std::make_unique<MemoryValue>(8, std::make_unique<RegValue>(Reg::RSP), nullptr, 1, 0);
         emit_assignment_or_store(std::move(mem_dst), std::move(src), ir);
@@ -129,8 +140,66 @@ public:
 
         auto rsp = std::make_unique<RegValue>(Reg::RSP);
         auto add_expr = std::make_unique<BinaryExpression>(
-            Operation::Add, rsp->clone(), std::make_unique<ImmValue>(8));
-        emit_assignment_or_store(std::move(rsp), std::move(add_expr), ir);
+            Operation::Add, read_reg(Reg::RSP), std::make_unique<ImmValue>(8));
+        new_assign(std::move(rsp), std::move(add_expr), ir);
+    }
+
+    std::unique_ptr<Expression> make_condition(x86_insn insn_id) {
+        switch (insn_id) {
+            case X86_INS_JE:
+                return std::make_unique<BinaryExpression>(
+                    Operation::Eq, read_reg(Reg::ZF), std::make_unique<ImmValue>(1));
+            case X86_INS_JNE:
+                return std::make_unique<BinaryExpression>(
+                    Operation::Ne, read_reg(Reg::ZF), std::make_unique<ImmValue>(1));
+            case X86_INS_JG:
+                return std::make_unique<BinaryExpression>(
+                    Operation::Gt, read_reg(Reg::ZF), std::make_unique<ImmValue>(0));
+            case X86_INS_JGE:
+                return std::make_unique<BinaryExpression>(
+                    Operation::Ge, read_reg(Reg::ZF), std::make_unique<ImmValue>(0));
+            case X86_INS_JL:
+                return std::make_unique<BinaryExpression>(
+                    Operation::Lt, read_reg(Reg::ZF), std::make_unique<ImmValue>(0));
+            case X86_INS_JLE:
+                return std::make_unique<BinaryExpression>(
+                    Operation::Le, read_reg(Reg::ZF), std::make_unique<ImmValue>(0));
+            default:
+                throw std::runtime_error("unsupported condition");
+        }
+    }
+
+    // Unconditional jump: target is always known at lift time for direct
+    // jumps, so this becomes a single first-class JumpStatement.
+    void emit_jump(const cs_x86& x86, IR& ir) {
+        if (x86.op_count < 1) throw std::runtime_error("invalid jump");
+        auto target = static_cast<uint64_t>(x86.operands[0].imm);
+        ir.add(std::make_unique<JumpStatement>(target));
+    }
+
+    // Conditional jump: the "not taken" case needs no explicit target --
+    // the IR is a flat, in-order statement stream, so falling through
+    // simply means "go to the next statement", exactly like real x86.
+    void emit_conditional_jump(const cs_x86& x86, IR& ir, x86_insn insn_id) {
+        if (x86.op_count < 1) throw std::runtime_error("invalid conditional jump");
+        auto target = static_cast<uint64_t>(x86.operands[0].imm);
+        auto condition = make_condition(insn_id);
+        ir.add(std::make_unique<ConditionalJumpStatement>(std::move(condition), target));
+    }
+
+    // Direct call: only X86_OP_IMM targets are supported for now.
+    // Indirect calls (register/memory targets) are a natural place to
+    // extend this later.
+    void emit_call(const cs_x86& x86, IR& ir) {
+        if (x86.op_count < 1) throw std::runtime_error("invalid call");
+        if (x86.operands[0].type != X86_OP_IMM)
+            throw std::runtime_error("only direct calls are supported");
+        auto target = static_cast<uint64_t>(x86.operands[0].imm);
+        ir.add(std::make_unique<CallStatement>(target));
+    }
+
+    void emit_return(IR& ir) {
+        ir.add(std::make_unique<ReturnStatement>());
     }
 
     IR lift(const uint8_t* code, size_t size) {
@@ -143,9 +212,12 @@ public:
 
         for (size_t i = 0; i < count; i++) {
             std::cout << insn[i].mnemonic << " " << insn[i].op_str << "\n";
+            ir.mark_instruction_start(insn[i].address);
+            uint64_t fallthrough = insn[i].address + insn[i].size;
             auto it = handlers.find(static_cast<x86_insn>(insn[i].id));
-            if (it != handlers.end())
-                it->second->lift(insn[i].detail->x86, *this, ir);
+            if (it != handlers.end()) {
+                it->second->lift(insn[i].detail->x86, *this, ir, fallthrough);
+            }
         }
 
         cs_free(insn, count);
@@ -155,6 +227,7 @@ public:
 private:
     csh handle;
     std::unordered_map<x86_insn, std::unique_ptr<InstructionHandler>> handlers;
+    std::unordered_map<Reg, uint64_t> last_assign;
 
     void register_handlers();
 };
@@ -163,14 +236,14 @@ class BinaryOpHandler : public InstructionHandler {
     Operation op;
 public:
     explicit BinaryOpHandler(Operation op) : op(op) {}
-    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir, uint64_t) const override {
         lifter.emit_binary_operation(x86, op, ir);
     }
 };
 
 class MovHandler : public InstructionHandler {
 public:
-    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir, uint64_t) const override {
         auto dst = lifter.operand(x86.operands[0]);
         auto src = lifter.operand(x86.operands[1]);
         lifter.emit_assignment_or_store(std::move(dst), std::move(src), ir);
@@ -179,29 +252,59 @@ public:
 
 class PushHandler : public InstructionHandler {
 public:
-    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir, uint64_t) const override {
         lifter.emit_stack_push(lifter.operand(x86.operands[0]), ir);
     }
 };
 
 class PopHandler : public InstructionHandler {
 public:
-    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir, uint64_t) const override {
         lifter.emit_stack_pop(lifter.operand(x86.operands[0]), ir);
     }
 };
 
 class PushfqHandler : public InstructionHandler {
 public:
-    void lift(const cs_x86&, Lifter& lifter, IR& ir) const override {
+    void lift(const cs_x86&, Lifter& lifter, IR& ir, uint64_t) const override {
         lifter.emit_stack_push(std::make_unique<RegValue>(Reg::RFLAGS), ir);
     }
 };
 
 class PopfqHandler : public InstructionHandler {
 public:
-    void lift(const cs_x86&, Lifter& lifter, IR& ir) const override {
+    void lift(const cs_x86&, Lifter& lifter, IR& ir, uint64_t) const override {
         lifter.emit_stack_pop(std::make_unique<RegValue>(Reg::RFLAGS), ir);
+    }
+};
+
+class JumpHandler : public InstructionHandler {
+public:
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir, uint64_t) const override {
+        lifter.emit_jump(x86, ir);
+    }
+};
+
+class ConditionalJumpHandlerWithInsn : public InstructionHandler {
+    x86_insn insn_id;
+public:
+    explicit ConditionalJumpHandlerWithInsn(x86_insn id) : insn_id(id) {}
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir, uint64_t) const override {
+        lifter.emit_conditional_jump(x86, ir, insn_id);
+    }
+};
+
+class CallHandler : public InstructionHandler {
+public:
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir, uint64_t) const override {
+        lifter.emit_call(x86, ir);
+    }
+};
+
+class RetHandler : public InstructionHandler {
+public:
+    void lift(const cs_x86&, Lifter& lifter, IR& ir, uint64_t) const override {
+        lifter.emit_return(ir);
     }
 };
 
@@ -218,4 +321,13 @@ inline void Lifter::register_handlers() {
     handlers[X86_INS_SHR]    = std::make_unique<BinaryOpHandler>(Operation::Shr);
     handlers[X86_INS_RCR]    = std::make_unique<BinaryOpHandler>(Operation::Rcr);
     handlers[X86_INS_RCL]    = std::make_unique<BinaryOpHandler>(Operation::Rcl);
+    handlers[X86_INS_JMP]    = std::make_unique<JumpHandler>();
+    handlers[X86_INS_JE]     = std::make_unique<ConditionalJumpHandlerWithInsn>(X86_INS_JE);
+    handlers[X86_INS_JNE]    = std::make_unique<ConditionalJumpHandlerWithInsn>(X86_INS_JNE);
+    handlers[X86_INS_JG]     = std::make_unique<ConditionalJumpHandlerWithInsn>(X86_INS_JG);
+    handlers[X86_INS_JGE]    = std::make_unique<ConditionalJumpHandlerWithInsn>(X86_INS_JGE);
+    handlers[X86_INS_JL]     = std::make_unique<ConditionalJumpHandlerWithInsn>(X86_INS_JL);
+    handlers[X86_INS_JLE]    = std::make_unique<ConditionalJumpHandlerWithInsn>(X86_INS_JLE);
+    handlers[X86_INS_CALL]   = std::make_unique<CallHandler>();
+    handlers[X86_INS_RET]    = std::make_unique<RetHandler>();
 }
