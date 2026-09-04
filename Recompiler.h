@@ -22,19 +22,10 @@ public:
 
     Result compile(const IR& ir) {
         asmjit::CodeHolder code;
-        code.init(asmjit::Environment::host());
+        code.init(asmjit::Environment::host(),0x00);
 
         asmjit::x86::Assembler assembler(&code);
 
-        /*
-         * Control flow (Jump / ConditionalJump / Call) targets are
-         * addresses from the original code, represented here as AsmJit
-         * labels. First we allocate a label for every address any
-         * statement branches to; then, while emitting the statement
-         * stream below, each label gets *bound* at the position of the
-         * instruction it points to (see bind_label_at).
-         */
-        build_target_labels(ir, assembler);
 
         /*
          * Invert IR::address_starts (address -> statement index) so that,
@@ -48,7 +39,7 @@ public:
         const auto& stmts = ir.statements;
 
         for (size_t i = 0; i < stmts.size(); ++i) {
-            bind_label_at(i, index_to_address, assembler);
+
 
             if (i + 1 < stmts.size() &&
                 emit_push_pop(
@@ -94,52 +85,8 @@ private:
     // some Jump/ConditionalJump/Call statement targets.
     std::unordered_map<uint64_t, asmjit::Label> target_labels_;
 
-    /*
-     * Build labels for all known control-flow targets.
-     *
-     * IMPORTANT:
-     * Creating a label is not the same as binding it.
-     *
-     * The label is bound when we reach the corresponding IR location.
-     */
-    void build_target_labels(
-        const IR& ir,
-        asmjit::x86::Assembler& assembler)
-    {
-        target_labels_.clear();
 
-        for (const auto& stmt : ir.statements) {
-            collect_targets_from_statement(
-                stmt.get(),
-                assembler);
-        }
-    }
 
-    /*
-     * Every control-flow statement carries its target address directly,
-     * so collecting labels is just a matter of asking each one for it.
-     * Adding a new control-flow statement kind later just means adding
-     * one more branch here.
-     */
-    void collect_targets_from_statement(
-        Statement* stmt,
-        asmjit::x86::Assembler& assembler)
-    {
-        if (auto* jump = dynamic_cast<JumpStatement*>(stmt)) {
-            ensure_target_label(jump->target, assembler);
-            return;
-        }
-
-        if (auto* cjump = dynamic_cast<ConditionalJumpStatement*>(stmt)) {
-            ensure_target_label(cjump->target, assembler);
-            return;
-        }
-
-        if (auto* call = dynamic_cast<CallStatement*>(stmt)) {
-            ensure_target_label(call->target, assembler);
-            return;
-        }
-    }
 
     asmjit::Label ensure_target_label(
         uint64_t target,
@@ -157,59 +104,6 @@ private:
             label);
 
         return label;
-    }
-
-    /*
-     * If statement index `i` is the first statement of an instruction
-     * that some Jump/ConditionalJump/Call targets, bind that label here.
-     *
-     * NOTE: this only resolves *intra-block* targets -- addresses that
-     * were actually part of the lifted instruction stream (e.g. a loop
-     * jumping backwards). A target outside the lifted block (an external
-     * function, or code we simply didn't lift) has no known position to
-     * bind a label to; its label is left unbound and AsmJit will report
-     * that at finalize() time. Handling those -- e.g. by emitting an
-     * indirect jump/call to an absolute address instead of a relative
-     * label -- is a natural next extension point.
-     */
-    void bind_label_at(
-        size_t i,
-        const std::unordered_map<size_t, uint64_t>& index_to_address,
-        asmjit::x86::Assembler& assembler)
-    {
-        auto addr_it = index_to_address.find(i);
-        if (addr_it == index_to_address.end())
-            return;
-
-        auto label_it = target_labels_.find(addr_it->second);
-        if (label_it == target_labels_.end())
-            return;
-
-        check(
-            assembler.bind(label_it->second),
-            "AsmJit failed to bind label");
-    }
-
-    asmjit::Label resolve_target(
-        uint64_t target,
-        asmjit::x86::Assembler& assembler)
-    {
-        auto it = target_labels_.find(target);
-
-        if (it == target_labels_.end()) {
-            /*
-             * Unknown target.
-             *
-             * We create a label here so the caller still gets a
-             * proper relocation/branch representation instead of
-             * trying to write RIP directly.
-             */
-            return ensure_target_label(
-                target,
-                assembler);
-        }
-
-        return it->second;
     }
 
     void emit_statement(
@@ -302,13 +196,10 @@ private:
         asmjit::x86::Assembler& assembler,
         uint64_t target)
     {
-        asmjit::Label label =
-            resolve_target(
-                target,
-                assembler);
+
 
         check(
-            assembler.jmp(label),
+            assembler.jmp(target),
             "AsmJit failed to emit JMP");
     }
 
@@ -316,13 +207,10 @@ private:
         asmjit::x86::Assembler& assembler,
         uint64_t target)
     {
-        asmjit::Label label =
-            resolve_target(
-                target,
-                assembler);
+
 
         check(
-            assembler.call(label),
+            assembler.call(target),
             "AsmJit failed to emit CALL");
     }
 
@@ -379,35 +267,6 @@ private:
         auto* flag =
             dynamic_cast<RegValue*>(left);
 
-        if (flag && is_flag_reg(flag->reg)) {
-            uint64_t offset = assembler.offset();
-
-            int64_t rel =
-                static_cast<int64_t>(cjump->target) -
-                static_cast<int64_t>(offset + 6);
-
-            uint32_t rel32 =
-                static_cast<uint32_t>(rel);
-
-            uint8_t opcode0 = 0x0F;
-            uint8_t opcode1 =
-                0x80 + static_cast<uint8_t>(cc);
-
-            check(
-                assembler.db(opcode0),
-                "Failed to emit Jcc opcode");
-
-            check(
-                assembler.db(opcode1),
-                "Failed to emit Jcc opcode");
-
-            check(
-                assembler.dd(rel32),
-                "Failed to emit Jcc displacement");
-
-            return;
-        }
-
         check(
             assembler.emit(
                 asmjit::x86::Inst::kIdCmp,
@@ -415,13 +274,8 @@ private:
                 operand(right)),
             "AsmJit failed to emit CMP");
 
-        asmjit::Label label =
-            resolve_target(
-                cjump->target,
-                assembler);
-
         check(
-            assembler.j(cc, label),
+            assembler.j(cc, cjump->target),
             "AsmJit failed to emit conditional JMP");
     }
 

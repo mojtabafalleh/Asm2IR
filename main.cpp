@@ -29,7 +29,7 @@ std::vector<uint8_t> hex_to_bytes(const std::string& hex) {
 // Demo pipeline: hex bytes -> Lifter -> IR -> Recompiler -> bytes.
 int main() {
 
-    auto code = hex_to_bytes("9C 45 29 C0 41 81 E8 79 B7 BB A6 41 F7 D8 9D");
+    auto code = hex_to_bytes("E9 12 7A D9 03");
 
     Lifter lift;
     IR ir = lift.lift(
