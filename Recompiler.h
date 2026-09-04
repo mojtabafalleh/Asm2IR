@@ -7,10 +7,7 @@
 #include <sstream>
 #include <iomanip>
 #include <stdexcept>
-#include <iostream>
 
-// Turns an IR back into real x86-64 machine code using AsmJit,
-// then re-disassembles the result for inspection/verification.
 class Recompiler {
 public:
     struct Result {
@@ -18,280 +15,138 @@ public:
         std::string hex;
     };
 
-    // Emit machine code for every Assign/Store statement in the IR
-    // and return its disassembly + raw hex bytes. Both compile to a
-    // MOV; the only difference is whether the destination is a
-    // register/flag (Assign) or memory (Store).
-        Result compile(const IR& ir) {
-            asmjit::CodeHolder code;
-            code.init(asmjit::Environment::host());
+    Result compile(const IR& ir) {
+        asmjit::CodeHolder code;
+        code.init(asmjit::Environment::host());
 
-            asmjit::x86::Assembler assembler(&code);
+        asmjit::x86::Assembler assembler(&code);
 
-            const auto& stmts = ir.statements;
+        const auto& stmts = ir.statements;
 
-            for (size_t i = 0; i < stmts.size(); ++i) {
+        for (size_t i = 0; i < stmts.size(); ++i) {
 
-                // The Lifter expands PUSH/POP/PUSHFQ/POPFQ into two
-                // separate statements (an RSP adjustment + a stack
-                // memory access). Before falling back to generic
-                // per-statement codegen, try to recognize that
-                // two-statement shape here and re-fuse it back into
-                // a single push/pop/pushfq/popfq instruction.
-                if (i + 1 < stmts.size() &&
-                    emit_push_pop(assembler, stmts[i].get(), stmts[i + 1].get())) {
-                    ++i;
-                    continue;
-                }
-
-                const auto& stmt = stmts[i];
-
-                if (auto* assign = dynamic_cast<AssignStatement*>(stmt.get())) {
-                    auto* dst = assign->dst.get();
-                    auto* expr = assign->value.get();
-
-                    if (!dst || !expr)
-                        throw std::runtime_error("Invalid AssignStatement");
-
-                    if (auto* binary = dynamic_cast<BinaryExpression*>(expr)) {
-                        auto* left = dynamic_cast<Value*>(binary->left.get());
-                        auto* right = dynamic_cast<Value*>(binary->right.get());
-
-                        if (!left || !right)
-                            throw std::runtime_error("Binary operands must be Value");
-
-                        auto dst_operand = operand(dst);
-                        auto left_operand = operand(left);
-                        auto right_operand = operand(right);
-
-                        asmjit::Error err;
-
-                        switch (binary->operation()) {
-                            case Operation::Add:
-               
-                                if (dst_operand == left_operand) {
-                    
-                                    err = assembler.emit(asmjit::x86::Inst::kIdAdd, dst_operand, right_operand);
-                                } else {
-            
-                                    err = assembler.emit(asmjit::x86::Inst::kIdMov, dst_operand, left_operand);
-                                    if (err == asmjit::kErrorOk) {
-                                        err = assembler.emit(asmjit::x86::Inst::kIdAdd, dst_operand, right_operand);
-                                    }
-                                }
-                                break;
-
-                            case Operation::Sub:
-                                if (dst_operand == left_operand) {
-                                    err = assembler.emit(asmjit::x86::Inst::kIdSub, dst_operand, right_operand);
-                                } else {
-                                    err = assembler.emit(asmjit::x86::Inst::kIdMov, dst_operand, left_operand);
-                                    if (err == asmjit::kErrorOk) {
-                                        err = assembler.emit(asmjit::x86::Inst::kIdSub, dst_operand, right_operand);
-                                    }
-                                }
-                                break;
-
-                            case Operation::BitXor:
-                                if (dst_operand == left_operand) {
-                                    err = assembler.emit(asmjit::x86::Inst::kIdXor, dst_operand, right_operand);
-                                } else {
-                                    err = assembler.emit(asmjit::x86::Inst::kIdMov, dst_operand, left_operand);
-                                    if (err == asmjit::kErrorOk) {
-                                        err = assembler.emit(asmjit::x86::Inst::kIdXor, dst_operand, right_operand);
-                                    }
-                                }
-                                break;
-
-                            case Operation::Shr:
-                                if (dst_operand == left_operand) {
-                                    err = assembler.emit(asmjit::x86::Inst::kIdShr, dst_operand, right_operand);
-                                } else {
-                                    err = assembler.emit(asmjit::x86::Inst::kIdMov, dst_operand, left_operand);
-                                    if (err == asmjit::kErrorOk) {
-                                        err = assembler.emit(asmjit::x86::Inst::kIdShr, dst_operand, right_operand);
-                                    }
-                                }
-                                break;
-
-                            case Operation::Rcr:
-                                if (dst_operand == left_operand) {
-                                    err = assembler.emit(asmjit::x86::Inst::kIdRcr, dst_operand, right_operand);
-                                } else {
-                                    err = assembler.emit(asmjit::x86::Inst::kIdMov, dst_operand, left_operand);
-                                    if (err == asmjit::kErrorOk) {
-                                        err = assembler.emit(asmjit::x86::Inst::kIdRcr, dst_operand, right_operand);
-                                    }
-                                }
-                                break;
-                            case Operation::Rcl:
-                                if (dst_operand == left_operand) {
-                                    err = assembler.emit(asmjit::x86::Inst::kIdRcl, dst_operand, right_operand);
-                                } else {
-                                    err = assembler.emit(asmjit::x86::Inst::kIdMov, dst_operand, left_operand);
-                                    if (err == asmjit::kErrorOk) {
-                                        err = assembler.emit(asmjit::x86::Inst::kIdRcl, dst_operand, right_operand);
-                                    }
-                                }
-                                break;
-
-                            default:
-                                throw std::runtime_error("Unsupported binary operation");
-                        }
-
-                        if (err != asmjit::kErrorOk) {
-                            throw std::runtime_error("AsmJit failed to emit instruction");
-                        }
-
-                    } else if (auto* src = dynamic_cast<Value*>(expr)) {
-                        auto dst_operand = operand(dst);
-                        auto src_operand = operand(src);
-
-                        auto err = assembler.emit(
-                            asmjit::x86::Inst::kIdMov,
-                            dst_operand,
-                            src_operand
-                        );
-
-                        if (err != asmjit::kErrorOk) {
-                            throw std::runtime_error("AsmJit failed to emit MOV");
-                        }
-                    } else {
-                        throw std::runtime_error("Unsupported expression type");
-                    }
-
-                } else if (auto* store = dynamic_cast<StoreStatement*>(stmt.get())) {
-                    auto* address = dynamic_cast<Value*>(store->address.get());
-                    auto* expr = store->value.get();
-
-                    if (!address || !expr)
-                        throw std::runtime_error("Invalid StoreStatement");
-
-                    if (auto* binary = dynamic_cast<BinaryExpression*>(expr)) {
-                        auto* left = dynamic_cast<Value*>(binary->left.get());
-                        auto* right = dynamic_cast<Value*>(binary->right.get());
-
-                        if (!left || !right)
-                            throw std::runtime_error("Binary operands must be Value");
-
-                        auto address_operand = operand(address);
-                        auto left_operand = operand(left);
-                        auto right_operand = operand(right);
-
-                        asmjit::Error err;
-
-                        switch (binary->operation()) {
-                            case Operation::Add: {
-                                auto temp = asmjit::x86::rax;
-                                err = assembler.emit(asmjit::x86::Inst::kIdMov, temp, address_operand);
-                                if (err == asmjit::kErrorOk) {
-                                    err = assembler.emit(asmjit::x86::Inst::kIdAdd, temp, right_operand);
-                                }
-                                if (err == asmjit::kErrorOk) {
-                                    err = assembler.emit(asmjit::x86::Inst::kIdMov, address_operand, temp);
-                                }
-                                break;
-                            }
-
-                            case Operation::Sub: {
-                                auto temp = asmjit::x86::rax;
-                                err = assembler.emit(asmjit::x86::Inst::kIdMov, temp, address_operand);
-                                if (err == asmjit::kErrorOk) {
-                                    err = assembler.emit(asmjit::x86::Inst::kIdSub, temp, right_operand);
-                                }
-                                if (err == asmjit::kErrorOk) {
-                                    err = assembler.emit(asmjit::x86::Inst::kIdMov, address_operand, temp);
-                                }
-                                break;
-                            }
-
-                            default:
-                                throw std::runtime_error("Unsupported binary operation for Store");
-                        }
-
-                        if (err != asmjit::kErrorOk) {
-                            throw std::runtime_error("AsmJit failed to emit instruction");
-                        }
-
-                    } else if (auto* src = dynamic_cast<Value*>(expr)) {
-                        auto dst_operand = operand(address);
-                        auto src_operand = operand(src);
-
-                        auto err = assembler.emit(
-                            asmjit::x86::Inst::kIdMov,
-                            dst_operand,
-                            src_operand
-                        );
-
-                        if (err != asmjit::kErrorOk) {
-                            throw std::runtime_error("AsmJit failed to emit MOV for Store");
-                        }
-                    } else {
-                        throw std::runtime_error("Unsupported expression type for Store");
-                    }
-
-                } else {
-                    continue;
-                }
+            if (i + 1 < stmts.size() &&
+                emit_push_pop(assembler, stmts[i].get(), stmts[i + 1].get())) {
+                ++i;
+                continue;
             }
 
-            const auto* section = code.sectionById(0);
+            const auto& stmt = stmts[i];
 
-            const uint8_t* data = section->buffer().data();
-            size_t size = section->buffer().size();
+            if (auto* assign = dynamic_cast<AssignStatement*>(stmt.get())) {
+                if (!assign->dst || !assign->value)
+                    throw std::runtime_error("Invalid AssignStatement");
 
-            return {
-                disassemble(data, size),
-                bytes_to_hex(data, size)
-            };
+                emit_write(assembler, operand(assign->dst.get()), assign->value.get(), false);
+
+            } else if (auto* store = dynamic_cast<StoreStatement*>(stmt.get())) {
+                if (!store->address || !store->value)
+                    throw std::runtime_error("Invalid StoreStatement");
+
+                emit_write(assembler, operand(store->address.get()), store->value.get(), true);
+            }
         }
 
+        const auto* section = code.sectionById(0);
+        const uint8_t* data = section->buffer().data();
+        size_t size = section->buffer().size();
+
+        return { disassemble(data, size), bytes_to_hex(data, size) };
+    }
+
 private:
+
+    // --------------------
+    // Generic Assign/Store -> AsmJit emission
+    // --------------------
+
+    void check(asmjit::Error err, const char* what) {
+        if (err != asmjit::kErrorOk)
+            throw std::runtime_error(what);
+    }
+
+    asmjit::x86::Inst::Id to_inst_id(Operation op) {
+        switch (op) {
+            case Operation::Add:    return asmjit::x86::Inst::kIdAdd;
+            case Operation::Sub:    return asmjit::x86::Inst::kIdSub;
+            case Operation::BitXor: return asmjit::x86::Inst::kIdXor;
+            case Operation::Shr:    return asmjit::x86::Inst::kIdShr;
+            case Operation::Rcr:    return asmjit::x86::Inst::kIdRcr;
+            case Operation::Rcl:    return asmjit::x86::Inst::kIdRcl;
+            default: throw std::runtime_error("unsupported binary operation");
+        }
+    }
+
+    // dst = left op right, where dst is a register/flag operand.
+    void emit_binary_reg(
+        asmjit::x86::Assembler& a, Operation op,
+        asmjit::Operand dst, asmjit::Operand left, asmjit::Operand right
+    ) {
+        auto id = to_inst_id(op);
+
+        if (dst == left) {
+            check(a.emit(id, dst, right), "AsmJit failed to emit instruction");
+        } else {
+            check(a.emit(asmjit::x86::Inst::kIdMov, dst, left), "AsmJit failed to emit MOV");
+            check(a.emit(id, dst, right), "AsmJit failed to emit instruction");
+        }
+    }
+
+    // [address] = [address] op right, via a temp register (rax).
+    void emit_binary_mem(
+        asmjit::x86::Assembler& a, Operation op,
+        asmjit::Operand address, asmjit::Operand right
+    ) {
+        auto id = to_inst_id(op);
+        auto temp = asmjit::x86::rax;
+
+        check(a.emit(asmjit::x86::Inst::kIdMov, temp, address), "AsmJit failed to emit MOV");
+        check(a.emit(id, temp, right), "AsmJit failed to emit instruction");
+        check(a.emit(asmjit::x86::Inst::kIdMov, address, temp), "AsmJit failed to emit MOV");
+    }
+
+    // Shared codegen for AssignStatement/StoreStatement: dst = expr.
+    // `is_mem` picks the register vs memory binary-op strategy.
+    void emit_write(asmjit::x86::Assembler& a, asmjit::Operand dst, Expression* expr, bool is_mem) {
+
+        if (auto* binary = dynamic_cast<BinaryExpression*>(expr)) {
+            auto* left = dynamic_cast<Value*>(binary->left.get());
+            auto* right = dynamic_cast<Value*>(binary->right.get());
+
+            if (!left || !right)
+                throw std::runtime_error("Binary operands must be Value");
+
+            auto right_operand = operand(right);
+
+            if (is_mem)
+                emit_binary_mem(a, binary->operation(), dst, right_operand);
+            else
+                emit_binary_reg(a, binary->operation(), dst, operand(left), right_operand);
+
+        } else if (auto* src = dynamic_cast<Value*>(expr)) {
+            check(a.emit(asmjit::x86::Inst::kIdMov, dst, operand(src)), "AsmJit failed to emit MOV");
+
+        } else {
+            throw std::runtime_error("Unsupported expression type");
+        }
+    }
 
     // --------------------
     // PUSH / POP / PUSHFQ / POPFQ fusion
     // --------------------
     //
-    // The Lifter never emits a single "push"/"pop" statement -- it
-    // always expands them into two statements (see Lifter.h):
-    //
-    //   PUSH src / PUSHFQ:
-    //     rsp = rsp - 8
-    //     [rsp] = src            (src == RFLAGS for PUSHFQ)
-    //
-    //   POP dst / POPFQ:
-    //     dst = [rsp]            (dst == RFLAGS for POPFQ)
-    //     rsp = rsp + 8
-    //
-    // Compiling that literally would work (mov/sub/mov, or
-    // mov/add), but it's wasteful and doesn't round-trip back to a
-    // real push/pop. So before emitting generic code for `first`,
-    // we check whether `first` + `second` together match one of
-    // these two shapes, and if so emit the single real instruction
-    // instead. Returns true (and emits code) on a match; false (and
-    // emits nothing) otherwise, in which case the caller falls back
-    // to normal per-statement codegen for `first` alone.
-    bool emit_push_pop(
-        asmjit::x86::Assembler& assembler,
-        Statement* first,
-        Statement* second
-    ) {
-        if (try_emit_push(assembler, first, second))
-            return true;
+    // The Lifter always expands push/pop-family instructions into
+    // two statements (an RSP adjustment + a stack memory access).
+    // Before generic codegen runs on `first`, check whether `first`
+    // + `second` match one of those two-statement shapes and, if
+    // so, emit the single real instruction instead.
 
-        if (try_emit_pop(assembler, first, second))
-            return true;
-
-        return false;
+    bool emit_push_pop(asmjit::x86::Assembler& assembler, Statement* first, Statement* second) {
+        return try_emit_push(assembler, first, second) ||
+               try_emit_pop(assembler, first, second);
     }
 
-    // rsp = rsp - 8 ; [rsp] = src  ->  push src   (or pushfq if src == rflags)
-
-    bool try_emit_push(
-        asmjit::x86::Assembler& assembler,
-        Statement* first,
-        Statement* second
-    ) {
+    bool try_emit_push(asmjit::x86::Assembler& assembler, Statement* first, Statement* second) {
         auto* assign = dynamic_cast<AssignStatement*>(first);
         auto* store = dynamic_cast<StoreStatement*>(second);
 
@@ -309,29 +164,18 @@ private:
             return false;
 
         auto* src = dynamic_cast<Value*>(store->value.get());
-
         if (!src)
             return false;
 
-        asmjit::Error err;
+        auto err = is_reg(src, Reg::RFLAGS)
+            ? assembler.emit(asmjit::x86::Inst::kIdPushfq)
+            : assembler.emit(asmjit::x86::Inst::kIdPush, operand(src));
 
-        if (is_reg(src, Reg::RFLAGS)) {
-            err = assembler.emit(asmjit::x86::Inst::kIdPushfq);
-        } else {
-            err = assembler.emit(asmjit::x86::Inst::kIdPush, operand(src));
-        }
-
-        if (err != asmjit::kErrorOk)
-            throw std::runtime_error("AsmJit failed to emit PUSH");
-
+        check(err, "AsmJit failed to emit PUSH");
         return true;
     }
 
-    bool try_emit_pop(
-        asmjit::x86::Assembler& assembler,
-        Statement* first,
-        Statement* second
-    ) {
+    bool try_emit_pop(asmjit::x86::Assembler& assembler, Statement* first, Statement* second) {
         auto* assign1 = dynamic_cast<AssignStatement*>(first);
         auto* assign2 = dynamic_cast<AssignStatement*>(second);
 
@@ -349,57 +193,40 @@ private:
             return false;
 
         Value* dst = assign1->dst.get();
-
         if (!dst)
             return false;
 
-        asmjit::Error err;
+        auto err = is_reg(dst, Reg::RFLAGS)
+            ? assembler.emit(asmjit::x86::Inst::kIdPopfq)
+            : assembler.emit(asmjit::x86::Inst::kIdPop, operand(dst));
 
-        if (is_reg(dst, Reg::RFLAGS)) {
-            err = assembler.emit(asmjit::x86::Inst::kIdPopfq);
-        } else {
-            err = assembler.emit(asmjit::x86::Inst::kIdPop, operand(dst));
-        }
-
-        if (err != asmjit::kErrorOk)
-            throw std::runtime_error("AsmJit failed to emit POP");
-
+        check(err, "AsmJit failed to emit POP");
         return true;
     }
 
-
-    // True if `value` is a RegValue naming exactly `reg`.
     bool is_reg(Value* value, Reg reg) {
         auto* r = dynamic_cast<RegValue*>(value);
         return r && r->reg == reg;
     }
 
-    // True if `expr` is `BinaryExpression(op, rsp, imm)` where imm
-    // == amount, e.g. is_rsp_adjust(expr, Operation::Sub, 8) matches
-    // "rsp - 8".
+    // True if `expr` is `BinaryExpression(op, rsp, imm)` with imm == amount.
     bool is_rsp_adjust(Expression* expr, Operation op, uint64_t amount) {
         auto* binary = dynamic_cast<BinaryExpression*>(expr);
-
         if (!binary || binary->operation() != op)
             return false;
 
         auto* left = dynamic_cast<Value*>(binary->left.get());
         auto* right = dynamic_cast<Value*>(binary->right.get());
-
         if (!left || !right)
             return false;
 
         auto* imm = dynamic_cast<ImmValue*>(right);
-
         return is_reg(left, Reg::RSP) && imm && imm->value == amount;
     }
 
-    // True if `value` is exactly "[rsp]" -- an 8-byte memory access
-    // based on RSP alone, no index, no displacement -- i.e. the
-    // current stack top.
+    // True for "[rsp]": 8-byte access, base == rsp, no index, no displacement.
     bool is_stack_top(Value* value) {
         auto* mem = dynamic_cast<MemoryValue*>(value);
-
         return mem &&
                mem->size == 8 &&
                mem->displacement == 0 &&
@@ -407,10 +234,11 @@ private:
                is_reg(mem->base.get(), Reg::RSP);
     }
 
-    // Convert an IR Value (register/immediate/memory) into an
-    // AsmJit operand. Throws on null or unsupported Value kinds.
-    asmjit::Operand operand(Value* value) {
+    // --------------------
+    // Value <-> AsmJit operand conversion
+    // --------------------
 
+    asmjit::Operand operand(Value* value) {
         if (!value)
             throw std::runtime_error("null Value");
 
@@ -426,46 +254,19 @@ private:
         throw std::runtime_error("unsupported Value");
     }
 
-    // Build an AsmJit memory operand from an IR MemoryValue.
-    // NOTE: does not special-case a RIP base (rip-relative
-    // addressing), which will fail in to_reg() below.
-    asmjit::x86::Mem memory_operand(
-        const MemoryValue& mem
-    ) {
-        auto* base =
-            dynamic_cast<RegValue*>(mem.base.get());
+    // NOTE: does not special-case a RIP base (rip-relative addressing).
+    asmjit::x86::Mem memory_operand(const MemoryValue& mem) {
+        auto* base = dynamic_cast<RegValue*>(mem.base.get());
+        auto* index = dynamic_cast<RegValue*>(mem.index.get());
 
-        auto* index =
-            dynamic_cast<RegValue*>(mem.index.get());
+        auto base_reg = base ? to_reg(base->reg, 64) : asmjit::x86::Gp{};
+        auto index_reg = index ? to_reg(index->reg, 64) : asmjit::x86::Gp{};
 
-        auto base_reg =
-            base
-                ? to_reg(base->reg, 64)
-                : asmjit::x86::Gp{};
-
-        auto index_reg =
-            index
-                ? to_reg(index->reg, 64)
-                : asmjit::x86::Gp{};
-
-        return asmjit::x86::ptr(
-            base_reg,
-            index_reg,
-            scale_to_shift(mem.scale),
-            mem.displacement,
-            mem.size
-        );
+        return asmjit::x86::ptr(base_reg, index_reg, scale_to_shift(mem.scale), mem.displacement, mem.size);
     }
 
-    // Map our Reg enum + an access width (8/16/32/64 bits) to the
-    // matching AsmJit GP register -- e.g. (Reg::RAX, 32) -> eax,
-    // (Reg::RAX, 8) -> al. This is what makes a lifted `mov eax,
-    // ...` (RegValue{RAX, width=32}) recompile back to a real
-    // 32-bit `mov eax, ...` instead of always widening to `mov
-    // rax, ...`. Throws for anything without a direct GP mapping
-    // (e.g. RIP, NONE, or flag registers).
+    // (Reg::RAX, 32) -> eax, (Reg::RAX, 8) -> al, etc.
     asmjit::x86::Gp to_reg(Reg reg, uint8_t width = 64) {
-
         asmjit::x86::Gp reg64 = to_reg64(reg);
 
         switch (width) {
@@ -473,16 +274,10 @@ private:
             case 16: return reg64.r16();
             case 32: return reg64.r32();
             case 64: return reg64;
-
-            default:
-                throw std::runtime_error(
-                    "unsupported register width"
-                );
+            default: throw std::runtime_error("unsupported register width");
         }
     }
 
-    // The canonical 64-bit AsmJit register for a given Reg. Always
-    // full-width; to_reg() above narrows it down as needed.
     asmjit::x86::Gp to_reg64(Reg reg) {
         switch (reg) {
             case Reg::RAX: return asmjit::x86::rax;
@@ -501,93 +296,50 @@ private:
             case Reg::R13: return asmjit::x86::r13;
             case Reg::R14: return asmjit::x86::r14;
             case Reg::R15: return asmjit::x86::r15;
-
-            default:
-                throw std::runtime_error(
-                    "invalid register"
-                );
+            default: throw std::runtime_error("invalid register");
         }
     }
 
-    // Convert a memory scale factor (1/2/4/8) into the shift
-    // amount AsmJit expects for x86::ptr().
     uint32_t scale_to_shift(uint8_t scale) {
         switch (scale) {
             case 1: return 0;
             case 2: return 1;
             case 4: return 2;
             case 8: return 3;
-
-            default:
-                throw std::runtime_error(
-                    "invalid memory scale"
-                );
+            default: throw std::runtime_error("invalid memory scale");
         }
     }
 
-    // Disassemble raw machine code back to text, for display/debugging.
-    std::string disassemble(
-        const uint8_t* data,
-        size_t size
-    ) {
-        csh handle;
+    // --------------------
+    // Disassembly / formatting helpers
+    // --------------------
 
-        if (cs_open(
-                CS_ARCH_X86,
-                CS_MODE_64,
-                &handle
-            ) != CS_ERR_OK) {
-            throw std::runtime_error(
-                "capstone initialization failed"
-            );
-        }
+    std::string disassemble(const uint8_t* data, size_t size) {
+        csh handle;
+        if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK)
+            throw std::runtime_error("capstone initialization failed");
 
         cs_insn* insn = nullptr;
-
-        size_t count = cs_disasm(
-            handle,
-            data,
-            size,
-            0,
-            0,
-            &insn
-        );
+        size_t count = cs_disasm(handle, data, size, 0, 0, &insn);
 
         std::stringstream ss;
-
-        for (size_t i = 0; i < count; ++i) {
-            ss << insn[i].mnemonic
-               << " "
-               << insn[i].op_str
-               << "\n";
-        }
+        for (size_t i = 0; i < count; ++i)
+            ss << insn[i].mnemonic << " " << insn[i].op_str << "\n";
 
         if (insn)
             cs_free(insn, count);
 
         cs_close(&handle);
-
         return ss.str();
     }
 
-    // Format raw bytes as an uppercase, space-separated hex string.
-    std::string bytes_to_hex(
-        const uint8_t* data,
-        size_t size
-    ) {
+    std::string bytes_to_hex(const uint8_t* data, size_t size) {
         std::stringstream ss;
-
         for (size_t i = 0; i < size; ++i) {
-            if (i)
-                ss << ' ';
-
-            ss << std::uppercase
-               << std::hex
-               << std::setw(2)
-               << std::setfill('0')
+            if (i) ss << ' ';
+            ss << std::uppercase << std::hex << std::setw(2) << std::setfill('0')
                << static_cast<unsigned>(data[i]);
         }
-
         return ss.str();
     }
 };

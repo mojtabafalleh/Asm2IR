@@ -1,510 +1,221 @@
+#pragma once
+
 #include <capstone/capstone.h>
 #include "expression.h"
-#include "statement.h"
+#include "Statement.h"
 #include "IR.h"
+#include <unordered_map>
+#include <memory>
+#include <stdexcept>
 #include <iostream>
 
-// Translates raw x86-64 machine code into this project's IR,
-// using Capstone for disassembly/decoding.
-class Lifter {
-    csh handle;
+class Lifter;
 
-    // Map a Capstone 64-bit GP register id to our Reg enum.
-    // Falls back to Reg::NONE for anything not in this list
-    // (sub-registers like eax/ax/al, segment/xmm regs, etc.).
-
-    Reg reg(x86_reg r) {
-        switch (r) {
-            // ============================================================
-            // RAX
-            // ============================================================
-            case X86_REG_RAX: return Reg::RAX;
-            case X86_REG_EAX: return Reg::RAX;
-            case X86_REG_AX:  return Reg::RAX;
-            case X86_REG_AL:  return Reg::RAX;
-            case X86_REG_AH:  return Reg::RAX;
-
-            // ============================================================
-            // RBX
-            // ============================================================
-            case X86_REG_RBX: return Reg::RBX;
-            case X86_REG_EBX: return Reg::RBX;
-            case X86_REG_BX:  return Reg::RBX;
-            case X86_REG_BL:  return Reg::RBX;
-            case X86_REG_BH:  return Reg::RBX;
-
-            // ============================================================
-            // RCX
-            // ============================================================
-            case X86_REG_RCX: return Reg::RCX;
-            case X86_REG_ECX: return Reg::RCX;
-            case X86_REG_CX:  return Reg::RCX;
-            case X86_REG_CL:  return Reg::RCX;
-            case X86_REG_CH:  return Reg::RCX;
-
-            // ============================================================
-            // RDX
-            // ============================================================
-            case X86_REG_RDX: return Reg::RDX;
-            case X86_REG_EDX: return Reg::RDX;
-            case X86_REG_DX:  return Reg::RDX;
-            case X86_REG_DL:  return Reg::RDX;
-            case X86_REG_DH:  return Reg::RDX;
-
-            // ============================================================
-            // RSI
-            // ============================================================
-            case X86_REG_RSI: return Reg::RSI;
-            case X86_REG_ESI: return Reg::RSI;
-            case X86_REG_SI:  return Reg::RSI;
-            case X86_REG_SIL: return Reg::RSI;
-
-            // ============================================================
-            // RDI
-            // ============================================================
-            case X86_REG_RDI: return Reg::RDI;
-            case X86_REG_EDI: return Reg::RDI;
-            case X86_REG_DI:  return Reg::RDI;
-            case X86_REG_DIL: return Reg::RDI;
-
-            // ============================================================
-            // RBP
-            // ============================================================
-            case X86_REG_RBP: return Reg::RBP;
-            case X86_REG_EBP: return Reg::RBP;
-            case X86_REG_BP:  return Reg::RBP;
-            case X86_REG_BPL: return Reg::RBP;
-
-            // ============================================================
-            // RSP
-            // ============================================================
-            case X86_REG_RSP: return Reg::RSP;
-            case X86_REG_ESP: return Reg::RSP;
-            case X86_REG_SP:  return Reg::RSP;
-            case X86_REG_SPL: return Reg::RSP;
-
-            // ============================================================
-            // R8
-            // ============================================================
-            case X86_REG_R8:  return Reg::R8;
-            case X86_REG_R8D: return Reg::R8;
-            case X86_REG_R8W: return Reg::R8;
-            case X86_REG_R8B: return Reg::R8;
-
-            // ============================================================
-            // R9
-            // ============================================================
-            case X86_REG_R9:  return Reg::R9;
-            case X86_REG_R9D: return Reg::R9;
-            case X86_REG_R9W: return Reg::R9;
-            case X86_REG_R9B: return Reg::R9;
-
-            // ============================================================
-            // R10
-            // ============================================================
-            case X86_REG_R10:  return Reg::R10;
-            case X86_REG_R10D: return Reg::R10;
-            case X86_REG_R10W: return Reg::R10;
-            case X86_REG_R10B: return Reg::R10;
-
-            // ============================================================
-            // R11
-            // ============================================================
-            case X86_REG_R11:  return Reg::R11;
-            case X86_REG_R11D: return Reg::R11;
-            case X86_REG_R11W: return Reg::R11;
-            case X86_REG_R11B: return Reg::R11;
-
-            // ============================================================
-            // R12
-            // ============================================================
-            case X86_REG_R12:  return Reg::R12;
-            case X86_REG_R12D: return Reg::R12;
-            case X86_REG_R12W: return Reg::R12;
-            case X86_REG_R12B: return Reg::R12;
-
-            // ============================================================
-            // R13
-            // ============================================================
-            case X86_REG_R13:  return Reg::R13;
-            case X86_REG_R13D: return Reg::R13;
-            case X86_REG_R13W: return Reg::R13;
-            case X86_REG_R13B: return Reg::R13;
-
-            // ============================================================
-            // R14
-            // ============================================================
-            case X86_REG_R14:  return Reg::R14;
-            case X86_REG_R14D: return Reg::R14;
-            case X86_REG_R14W: return Reg::R14;
-            case X86_REG_R14B: return Reg::R14;
-
-            // ============================================================
-            // R15
-            // ============================================================
-            case X86_REG_R15:  return Reg::R15;
-            case X86_REG_R15D: return Reg::R15;
-            case X86_REG_R15W: return Reg::R15;
-            case X86_REG_R15B: return Reg::R15;
-
-            // ============================================================
-            // Special registers
-            // ============================================================
-            case X86_REG_RIP:    return Reg::RIP;
-            case X86_REG_EFLAGS: return Reg::RFLAGS;
-
-            default:
-                return Reg::NONE;
-        }
-    }
-
-
-
+class InstructionHandler {
 public:
-    // Opens a Capstone x86-64 handle with instruction detail enabled.
+    virtual ~InstructionHandler() = default;
+    virtual void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const = 0;
+};
+
+class Lifter {
+public:
     Lifter() {
         if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK)
             throw std::runtime_error("capstone initialization failed");
 
         cs_option(handle, CS_OPT_DETAIL, CS_OPT_ON);
+        register_handlers();
     }
 
-    // Releases the Capstone handle.
     ~Lifter() {
         cs_close(&handle);
     }
 
-    // Convert one Capstone operand (register, immediate, or memory)
-    // into an IR Value node. Throws on operand kinds not yet supported.
+    Reg reg(x86_reg r) {
+        switch (r) {
+            case X86_REG_RAX: case X86_REG_EAX: case X86_REG_AX: case X86_REG_AL: case X86_REG_AH:
+                return Reg::RAX;
+            case X86_REG_RBX: case X86_REG_EBX: case X86_REG_BX: case X86_REG_BL: case X86_REG_BH:
+                return Reg::RBX;
+            case X86_REG_RCX: case X86_REG_ECX: case X86_REG_CX: case X86_REG_CL: case X86_REG_CH:
+                return Reg::RCX;
+            case X86_REG_RDX: case X86_REG_EDX: case X86_REG_DX: case X86_REG_DL: case X86_REG_DH:
+                return Reg::RDX;
+            case X86_REG_RSI: case X86_REG_ESI: case X86_REG_SI: case X86_REG_SIL:
+                return Reg::RSI;
+            case X86_REG_RDI: case X86_REG_EDI: case X86_REG_DI: case X86_REG_DIL:
+                return Reg::RDI;
+            case X86_REG_RBP: case X86_REG_EBP: case X86_REG_BP: case X86_REG_BPL:
+                return Reg::RBP;
+            case X86_REG_RSP: case X86_REG_ESP: case X86_REG_SP: case X86_REG_SPL:
+                return Reg::RSP;
+            case X86_REG_R8: case X86_REG_R8D: case X86_REG_R8W: case X86_REG_R8B:
+                return Reg::R8;
+            case X86_REG_R9: case X86_REG_R9D: case X86_REG_R9W: case X86_REG_R9B:
+                return Reg::R9;
+            case X86_REG_R10: case X86_REG_R10D: case X86_REG_R10W: case X86_REG_R10B:
+                return Reg::R10;
+            case X86_REG_R11: case X86_REG_R11D: case X86_REG_R11W: case X86_REG_R11B:
+                return Reg::R11;
+            case X86_REG_R12: case X86_REG_R12D: case X86_REG_R12W: case X86_REG_R12B:
+                return Reg::R12;
+            case X86_REG_R13: case X86_REG_R13D: case X86_REG_R13W: case X86_REG_R13B:
+                return Reg::R13;
+            case X86_REG_R14: case X86_REG_R14D: case X86_REG_R14W: case X86_REG_R14B:
+                return Reg::R14;
+            case X86_REG_R15: case X86_REG_R15D: case X86_REG_R15W: case X86_REG_R15B:
+                return Reg::R15;
+            case X86_REG_RIP:    return Reg::RIP;
+            case X86_REG_EFLAGS: return Reg::RFLAGS;
+            default: return Reg::NONE;
+        }
+    }
+
     std::unique_ptr<Value> operand(const cs_x86_op& op) {
-
         switch (op.type) {
-
         case X86_OP_REG:
-            // op.size is Capstone's operand width in bytes (1/2/4/8
-            // for al/ax/eax/rax, ...). We only keep a canonical
-            // 64-bit Reg identity, so the actual access width has
-            // to be carried separately on RegValue::width, or a
-            // "mov eax, ..." would be indistinguishable from
-            // "mov rax, ..." once lifted.
-            return std::make_unique<RegValue>(
-                reg(op.reg),
-                static_cast<uint8_t>(op.size * 8)
-            );
+            return std::make_unique<RegValue>(reg(op.reg), static_cast<uint8_t>(op.size * 8));
 
         case X86_OP_IMM:
-            return std::make_unique<ImmValue>(
-                op.imm
-            );
+            return std::make_unique<ImmValue>(op.imm);
 
         case X86_OP_MEM: {
-
             auto& mem = op.mem;
-
             std::unique_ptr<Value> base;
             std::unique_ptr<Value> index;
 
-            if (mem.base != X86_REG_INVALID) {
-                base = std::make_unique<RegValue>(
-                    reg(mem.base)
-                );
-            }
+            if (mem.base != X86_REG_INVALID)
+                base = std::make_unique<RegValue>(reg(mem.base));
 
-            if (mem.index != X86_REG_INVALID) {
-                index = std::make_unique<RegValue>(
-                    reg(mem.index)
-                );
-            }
+            if (mem.index != X86_REG_INVALID)
+                index = std::make_unique<RegValue>(reg(mem.index));
 
-            return std::make_unique<MemoryValue>(
-                op.size,
-                std::move(base),
-                std::move(index),
-                mem.scale,
-                mem.disp
-            );
+            return std::make_unique<MemoryValue>(op.size, std::move(base), std::move(index), mem.scale, mem.disp);
         }
 
         default:
-            throw std::runtime_error(
-                "unsupported operand"
-            );
+            throw std::runtime_error("unsupported operand");
         }
     }
 
-
-
-    // Disassemble a single instruction at `code` and lift it into
-    // an IR. Only decodes one instruction (count == 1); throws on
-    // decode failure or on an unhandled mnemonic.
-        IR lift(const uint8_t* code, size_t size) {
-            cs_insn* insn;
-            IR ir;
-    
-     
-            size_t count = cs_disasm(handle, code, size, 0x1000, 0, &insn);
-    
-            if (count == 0)
-                throw std::runtime_error("disassembly failed");
-    
-
-            for (size_t i = 0; i < count; i++) {
-                std::cout << insn[i].mnemonic << " " << insn[i].op_str << std::endl;
-        
-                auto& x86 = insn[i].detail->x86;
-        
-            switch (insn[i].id) {
-                case X86_INS_MOV:
-                case X86_INS_MOVABS: {
-                    auto dst = operand(x86.operands[0]);
-                    auto src = operand(x86.operands[1]);
-                    emit_assignment_or_store(std::move(dst), std::move(src), ir);
-                    break;
-                }
-
-                case X86_INS_PUSHFQ: {
-                    // PUSH src
-                    // 1. RSP = RSP - 8
-                    // 2. [RSP] = rflag
-                    
-                    auto src = std::make_unique<RegValue>(Reg::RFLAGS);
-                    
-                    // RSP = RSP - 8
-                    auto rsp = std::make_unique<RegValue>(Reg::RSP);
-                    auto rsp_clone = rsp->clone();
-                    auto eight = std::make_unique<ImmValue>(8);
-                    
-                    auto sub_expr = std::make_unique<BinaryExpression>(
-                        Operation::Sub,
-                        std::move(rsp_clone),
-                        std::move(eight)
-                    );
-                    
-                    emit_assignment_or_store(
-                        std::move(rsp),
-                        std::move(sub_expr),
-                        ir
-                    );
-                    
-                    // [RSP] = src
-                    auto rsp_for_mem = std::make_unique<RegValue>(Reg::RSP);
-                    auto mem_dst = std::make_unique<MemoryValue>(
-                        8,  // size: 8 bytes for 64-bit push
-                        std::move(rsp_for_mem),
-                        nullptr,
-                        1,
-                        0
-                    );
-                    
-                    emit_assignment_or_store(
-                        std::move(mem_dst),
-                        std::move(src),
-                        ir
-                    );
-                    break;
-                }
-                case X86_INS_POPFQ: {
-                    // PUSH src
-                    // 1. RSP = RSP + 8
-                    // 2. [RSP] = rflag
-                    
-                    auto src = std::make_unique<RegValue>(Reg::RFLAGS);
-                    
-                    // RSP = RSP + 8
-                    auto rsp = std::make_unique<RegValue>(Reg::RSP);
-                    auto rsp_clone = rsp->clone();
-                    auto eight = std::make_unique<ImmValue>(8);
-                                        // src =  [RSP] 
-                    auto rsp_for_mem = std::make_unique<RegValue>(Reg::RSP);
-                    auto mem_dst = std::make_unique<MemoryValue>(
-                        8,  // size: 8 bytes for 64-bit push
-                        std::move(rsp_for_mem),
-                        nullptr,
-                        1,
-                        0
-                    );
-                    
-                    emit_assignment_or_store(
-                        std::move(src),
-                        std::move(mem_dst),
-                        ir
-                    );
-                    auto ADD_expr = std::make_unique<BinaryExpression>(
-                        Operation::Add,
-                        std::move(rsp_clone),
-                        std::move(eight)
-                    );
-                    
-                    emit_assignment_or_store(
-                        std::move(rsp),
-                        std::move(ADD_expr),
-                        ir
-                    );
-                    
-
-                    break;
-                }
-                case X86_INS_PUSH: {
-                    // PUSH src
-                    // 1. RSP = RSP - 8
-                    // 2. [RSP] = src
-                    
-                    auto src = operand(x86.operands[0]);
-                    
-                    // RSP = RSP - 8
-                    auto rsp = std::make_unique<RegValue>(Reg::RSP);
-                    auto rsp_clone = rsp->clone();
-                    auto eight = std::make_unique<ImmValue>(8);
-                    
-                    auto sub_expr = std::make_unique<BinaryExpression>(
-                        Operation::Sub,
-                        std::move(rsp_clone),
-                        std::move(eight)
-                    );
-                    
-                    emit_assignment_or_store(
-                        std::move(rsp),
-                        std::move(sub_expr),
-                        ir
-                    );
-                    
-                    // [RSP] = src
-                    auto rsp_for_mem = std::make_unique<RegValue>(Reg::RSP);
-                    auto mem_dst = std::make_unique<MemoryValue>(
-                        8,  // size: 8 bytes for 64-bit push
-                        std::move(rsp_for_mem),
-                        nullptr,
-                        1,
-                        0
-                    );
-                    
-                    emit_assignment_or_store(
-                        std::move(mem_dst),
-                        std::move(src),
-                        ir
-                    );
-                    break;
-                }
-
-                case X86_INS_POP: {
-                    // POP dst
-                    // 1. dst = [RSP]
-                    // 2. RSP = RSP + 8
-                    
-                    auto dst = operand(x86.operands[0]);
-                    
-                    // dst = [RSP]
-                    auto rsp_for_mem = std::make_unique<RegValue>(Reg::RSP);
-                    auto mem_src = std::make_unique<MemoryValue>(
-                        8,  // size: 8 bytes for 64-bit pop
-                        std::move(rsp_for_mem),
-                        nullptr,
-                        1,
-                        0
-                    );
-                    
-                    emit_assignment_or_store(
-                        std::move(dst),
-                        std::move(mem_src),
-                        ir
-                    );
-                    
-                    // RSP = RSP + 8
-                    auto rsp = std::make_unique<RegValue>(Reg::RSP);
-                    auto rsp_clone = rsp->clone();
-                    auto eight = std::make_unique<ImmValue>(8);
-                    
-                    auto add_expr = std::make_unique<BinaryExpression>(
-                        Operation::Add,
-                        std::move(rsp_clone),
-                        std::move(eight)
-                    );
-                    
-                    emit_assignment_or_store(
-                        std::move(rsp),
-                        std::move(add_expr),
-                        ir
-                    );
-                    break;
-                }
-
-                case X86_INS_ADD:
-                    emit_binary_operation( x86, Operation::Add, ir);
-                    break;
-
-                case X86_INS_RCR:
-                    emit_binary_operation( x86, Operation::Rcr, ir);
-                    break;
-
-                case X86_INS_RCL:
-                    emit_binary_operation( x86, Operation::Rcl, ir);
-                    break;
-
-                 case X86_INS_SHR:
-                    emit_binary_operation( x86, Operation::Shr, ir);
-                    break;
-    
-                case X86_INS_SUB:
-                    emit_binary_operation( x86, Operation::Sub, ir);
-                    break;
-                case X86_INS_XOR:
-                    emit_binary_operation( x86, Operation::BitXor, ir);
-                    break;
-
-            }
-            }
-    
-            cs_free(insn, count);
-            return ir;
-        }
-
-
-
-
-private:
-
-    void emit_assignment_or_store(
-        std::unique_ptr<Value> dst,
-        std::unique_ptr<Expression> src,
-        IR& ir
-    ) {
-        if (dst->category() == ExpressionCategory::Memory) {
-            ir.add(std::make_unique<StoreStatement>(
-                std::move(dst),
-                std::move(src)
-            ));
-        } else {
-            ir.add(std::make_unique<AssignStatement>(
-                std::move(dst),
-                std::move(src)
-            ));
-        }
+    void emit_assignment_or_store(std::unique_ptr<Value> dst, std::unique_ptr<Expression> src, IR& ir) {
+        if (dst->category() == ExpressionCategory::Memory)
+            ir.add(std::make_unique<StoreStatement>(std::move(dst), std::move(src)));
+        else
+            ir.add(std::make_unique<AssignStatement>(std::move(dst), std::move(src)));
     }
 
-    void emit_binary_operation(
-        const cs_x86& x86,
-        Operation op,
-        IR& ir
-    ) {
+    void emit_binary_operation(const cs_x86& x86, Operation op, IR& ir) {
         auto dst = operand(x86.operands[0]);
         auto src = operand(x86.operands[1]);
-        
-        auto dst_clone = dst->clone();
-        
-        auto expr = std::make_unique<BinaryExpression>(
-            op,
-            std::move(dst_clone),
-            std::move(src)
-        );
-        
-        emit_assignment_or_store(
-            std::move(dst),
-            std::move(expr),
-            ir
-        );
+
+        auto expr = std::make_unique<BinaryExpression>(op, dst->clone(), std::move(src));
+        emit_assignment_or_store(std::move(dst), std::move(expr), ir);
     }
 
+    void emit_stack_push(std::unique_ptr<Value> src, IR& ir) {
+        auto rsp = std::make_unique<RegValue>(Reg::RSP);
+        auto sub_expr = std::make_unique<BinaryExpression>(
+            Operation::Sub, rsp->clone(), std::make_unique<ImmValue>(8));
+        emit_assignment_or_store(std::move(rsp), std::move(sub_expr), ir);
 
+        auto mem_dst = std::make_unique<MemoryValue>(8, std::make_unique<RegValue>(Reg::RSP), nullptr, 1, 0);
+        emit_assignment_or_store(std::move(mem_dst), std::move(src), ir);
+    }
 
+    void emit_stack_pop(std::unique_ptr<Value> dst, IR& ir) {
+        auto mem_src = std::make_unique<MemoryValue>(8, std::make_unique<RegValue>(Reg::RSP), nullptr, 1, 0);
+        emit_assignment_or_store(std::move(dst), std::move(mem_src), ir);
 
+        auto rsp = std::make_unique<RegValue>(Reg::RSP);
+        auto add_expr = std::make_unique<BinaryExpression>(
+            Operation::Add, rsp->clone(), std::make_unique<ImmValue>(8));
+        emit_assignment_or_store(std::move(rsp), std::move(add_expr), ir);
+    }
+
+    IR lift(const uint8_t* code, size_t size) {
+        cs_insn* insn;
+        IR ir;
+
+        size_t count = cs_disasm(handle, code, size, 0x1000, 0, &insn);
+        if (count == 0)
+            throw std::runtime_error("disassembly failed");
+
+        for (size_t i = 0; i < count; i++) {
+            std::cout << insn[i].mnemonic << " " << insn[i].op_str << "\n";
+            auto it = handlers.find(static_cast<x86_insn>(insn[i].id));
+            if (it != handlers.end())
+                it->second->lift(insn[i].detail->x86, *this, ir);
+        }
+
+        cs_free(insn, count);
+        return ir;
+    }
+
+private:
+    csh handle;
+    std::unordered_map<x86_insn, std::unique_ptr<InstructionHandler>> handlers;
+
+    void register_handlers();
 };
+
+class BinaryOpHandler : public InstructionHandler {
+    Operation op;
+public:
+    explicit BinaryOpHandler(Operation op) : op(op) {}
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
+        lifter.emit_binary_operation(x86, op, ir);
+    }
+};
+
+class MovHandler : public InstructionHandler {
+public:
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
+        auto dst = lifter.operand(x86.operands[0]);
+        auto src = lifter.operand(x86.operands[1]);
+        lifter.emit_assignment_or_store(std::move(dst), std::move(src), ir);
+    }
+};
+
+class PushHandler : public InstructionHandler {
+public:
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
+        lifter.emit_stack_push(lifter.operand(x86.operands[0]), ir);
+    }
+};
+
+class PopHandler : public InstructionHandler {
+public:
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
+        lifter.emit_stack_pop(lifter.operand(x86.operands[0]), ir);
+    }
+};
+
+class PushfqHandler : public InstructionHandler {
+public:
+    void lift(const cs_x86&, Lifter& lifter, IR& ir) const override {
+        lifter.emit_stack_push(std::make_unique<RegValue>(Reg::RFLAGS), ir);
+    }
+};
+
+class PopfqHandler : public InstructionHandler {
+public:
+    void lift(const cs_x86&, Lifter& lifter, IR& ir) const override {
+        lifter.emit_stack_pop(std::make_unique<RegValue>(Reg::RFLAGS), ir);
+    }
+};
+
+inline void Lifter::register_handlers() {
+    handlers[X86_INS_MOV]    = std::make_unique<MovHandler>();
+    handlers[X86_INS_MOVABS] = std::make_unique<MovHandler>();
+    handlers[X86_INS_PUSH]   = std::make_unique<PushHandler>();
+    handlers[X86_INS_POP]    = std::make_unique<PopHandler>();
+    handlers[X86_INS_PUSHFQ] = std::make_unique<PushfqHandler>();
+    handlers[X86_INS_POPFQ]  = std::make_unique<PopfqHandler>();
+    handlers[X86_INS_ADD]    = std::make_unique<BinaryOpHandler>(Operation::Add);
+    handlers[X86_INS_SUB]    = std::make_unique<BinaryOpHandler>(Operation::Sub);
+    handlers[X86_INS_XOR]    = std::make_unique<BinaryOpHandler>(Operation::BitXor);
+    handlers[X86_INS_SHR]    = std::make_unique<BinaryOpHandler>(Operation::Shr);
+    handlers[X86_INS_RCR]    = std::make_unique<BinaryOpHandler>(Operation::Rcr);
+    handlers[X86_INS_RCL]    = std::make_unique<BinaryOpHandler>(Operation::Rcl);
+}
