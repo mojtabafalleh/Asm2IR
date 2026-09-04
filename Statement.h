@@ -18,7 +18,6 @@ public:
 
 class AssignStatement : public Statement {
 public:
-    uint64_t id;
     std::unique_ptr<Value> dst;
     std::unique_ptr<Expression> value;
 
@@ -27,7 +26,7 @@ public:
         std::unique_ptr<Value> dst,
         std::unique_ptr<Expression> value
     )
-        : id(id),
+        : 
           dst(std::move(dst)),
           value(std::move(value)) {}
 

@@ -28,15 +28,7 @@ public:
         return ++next_id;
     }
 
-    // Called by the Lifter right before lifting each instruction.
-    void mark_instruction_start(uint64_t address) {
-        address_starts[address] = statements.size();
-    }
-
     void add(std::unique_ptr<Statement> stmt) {
-        if (auto* assign = dynamic_cast<AssignStatement*>(stmt.get())) {
-            assign_map[assign->id] = assign;
-        }
         statements.push_back(std::move(stmt));
     }
 
@@ -127,7 +119,6 @@ public:
         if (auto* assign = dynamic_cast<AssignStatement*>(stmt)) {
             return "Assign(" +
                    expression_str(assign->dst.get()) +
-                   "[" + std::to_string(assign->id) + "]" +
                    ", " +
                    expression_str(assign->value.get()) +
                    ")";
@@ -213,18 +204,7 @@ private:
             ss << "]";
             return ss.str();
         }
-        if (auto* ref = dynamic_cast<AssignRef*>(value)) {
-            auto* dst = get_assign_dst(ref->id);
-            if (!dst) return "?";
-            std::string name;
-            if (auto* reg = dynamic_cast<RegValue*>(dst))
-                name = reg->register_name();
-            else if (dynamic_cast<MemoryValue*>(dst))
-                name = "mem";
-            else
-                name = "?";
-            return name + "[" + std::to_string(ref->id) + "]";
-        }
+
         return "?";
     }
 };

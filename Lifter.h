@@ -14,7 +14,7 @@ class Lifter;
 class InstructionHandler {
 public:
     virtual ~InstructionHandler() = default;
-    virtual void lift(const cs_x86& x86, Lifter& lifter, IR& ir, uint64_t fallthrough) const = 0;
+    virtual void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const = 0;
 };
 
 class Lifter {
@@ -92,19 +92,12 @@ public:
     }
 
     std::unique_ptr<Value> read_reg(Reg r, uint8_t width = 64) {
-        auto it = last_assign.find(r);
-        if (it != last_assign.end()) {
-            return std::make_unique<AssignRef>(it->second);
-        }
         return std::make_unique<RegValue>(r, width);
     }
 
     void new_assign(std::unique_ptr<Value> dst, std::unique_ptr<Expression> value, IR& ir) {
         uint64_t id = ir.allocate_assign_id();
         auto assign = std::make_unique<AssignStatement>(id, std::move(dst), std::move(value));
-        if (auto* reg = dynamic_cast<RegValue*>(assign->dst.get())) {
-            last_assign[reg->reg] = id;
-        }
         ir.add(std::move(assign));
     }
 
@@ -212,11 +205,9 @@ public:
 
         for (size_t i = 0; i < count; i++) {
             std::cout << insn[i].mnemonic << " " << insn[i].op_str << "\n";
-            ir.mark_instruction_start(insn[i].address);
-            uint64_t fallthrough = insn[i].address + insn[i].size;
             auto it = handlers.find(static_cast<x86_insn>(insn[i].id));
             if (it != handlers.end()) {
-                it->second->lift(insn[i].detail->x86, *this, ir, fallthrough);
+                it->second->lift(insn[i].detail->x86, *this, ir);
             }
         }
 
@@ -227,7 +218,7 @@ public:
 private:
     csh handle;
     std::unordered_map<x86_insn, std::unique_ptr<InstructionHandler>> handlers;
-    std::unordered_map<Reg, uint64_t> last_assign;
+
 
     void register_handlers();
 };
@@ -236,14 +227,14 @@ class BinaryOpHandler : public InstructionHandler {
     Operation op;
 public:
     explicit BinaryOpHandler(Operation op) : op(op) {}
-    void lift(const cs_x86& x86, Lifter& lifter, IR& ir, uint64_t) const override {
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
         lifter.emit_binary_operation(x86, op, ir);
     }
 };
 
 class MovHandler : public InstructionHandler {
 public:
-    void lift(const cs_x86& x86, Lifter& lifter, IR& ir, uint64_t) const override {
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
         auto dst = lifter.operand(x86.operands[0]);
         auto src = lifter.operand(x86.operands[1]);
         lifter.emit_assignment_or_store(std::move(dst), std::move(src), ir);
@@ -252,35 +243,58 @@ public:
 
 class PushHandler : public InstructionHandler {
 public:
-    void lift(const cs_x86& x86, Lifter& lifter, IR& ir, uint64_t) const override {
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
         lifter.emit_stack_push(lifter.operand(x86.operands[0]), ir);
     }
 };
 
 class PopHandler : public InstructionHandler {
 public:
-    void lift(const cs_x86& x86, Lifter& lifter, IR& ir, uint64_t) const override {
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
         lifter.emit_stack_pop(lifter.operand(x86.operands[0]), ir);
     }
 };
 
 class PushfqHandler : public InstructionHandler {
 public:
-    void lift(const cs_x86&, Lifter& lifter, IR& ir, uint64_t) const override {
+    void lift(const cs_x86&, Lifter& lifter, IR& ir) const override {
         lifter.emit_stack_push(std::make_unique<RegValue>(Reg::RFLAGS), ir);
+    }
+};
+
+class LeaHandler : public InstructionHandler {
+public:
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
+        if (x86.op_count != 2)
+            throw std::runtime_error("invalid LEA");
+
+        if (x86.operands[0].type != X86_OP_REG)
+            throw std::runtime_error("LEA destination must be register");
+
+        if (x86.operands[1].type != X86_OP_MEM)
+            throw std::runtime_error("LEA source must be memory operand");
+
+        auto dst = lifter.operand(x86.operands[0]);
+        auto src = lifter.operand(x86.operands[1]);
+
+        lifter.new_assign(
+            std::move(dst),
+            std::move(src),
+            ir
+        );
     }
 };
 
 class PopfqHandler : public InstructionHandler {
 public:
-    void lift(const cs_x86&, Lifter& lifter, IR& ir, uint64_t) const override {
+    void lift(const cs_x86&, Lifter& lifter, IR& ir) const override {
         lifter.emit_stack_pop(std::make_unique<RegValue>(Reg::RFLAGS), ir);
     }
 };
 
 class JumpHandler : public InstructionHandler {
 public:
-    void lift(const cs_x86& x86, Lifter& lifter, IR& ir, uint64_t) const override {
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
         lifter.emit_jump(x86, ir);
     }
 };
@@ -289,21 +303,21 @@ class ConditionalJumpHandlerWithInsn : public InstructionHandler {
     x86_insn insn_id;
 public:
     explicit ConditionalJumpHandlerWithInsn(x86_insn id) : insn_id(id) {}
-    void lift(const cs_x86& x86, Lifter& lifter, IR& ir, uint64_t) const override {
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
         lifter.emit_conditional_jump(x86, ir, insn_id);
     }
 };
 
 class CallHandler : public InstructionHandler {
 public:
-    void lift(const cs_x86& x86, Lifter& lifter, IR& ir, uint64_t) const override {
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
         lifter.emit_call(x86, ir);
     }
 };
 
 class RetHandler : public InstructionHandler {
 public:
-    void lift(const cs_x86&, Lifter& lifter, IR& ir, uint64_t) const override {
+    void lift(const cs_x86&, Lifter& lifter, IR& ir) const override {
         lifter.emit_return(ir);
     }
 };
@@ -314,6 +328,7 @@ inline void Lifter::register_handlers() {
     handlers[X86_INS_PUSH]   = std::make_unique<PushHandler>();
     handlers[X86_INS_POP]    = std::make_unique<PopHandler>();
     handlers[X86_INS_PUSHFQ] = std::make_unique<PushfqHandler>();
+    handlers[X86_INS_LEA]    = std::make_unique<LeaHandler>();
     handlers[X86_INS_POPFQ]  = std::make_unique<PopfqHandler>();
     handlers[X86_INS_ADD]    = std::make_unique<BinaryOpHandler>(Operation::Add);
     handlers[X86_INS_SUB]    = std::make_unique<BinaryOpHandler>(Operation::Sub);

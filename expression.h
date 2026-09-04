@@ -88,6 +88,7 @@ public:
 
 class RegValue : public Value {
 public:
+    int SSA_id;
     Reg reg;
     uint8_t width;
 
@@ -243,17 +244,6 @@ public:
         }
         ss << "]";
         return ss.str();
-    }
-};
-
-class AssignRef : public Value {
-public:
-    uint64_t id;
-
-    explicit AssignRef(uint64_t id) : id(id) {}
-
-    std::unique_ptr<Value> clone() const override {
-        return std::make_unique<AssignRef>(id);
     }
 };
 
