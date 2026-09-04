@@ -206,7 +206,7 @@ public:
         cs_insn* insn;
         IR ir;
 
-        size_t count = cs_disasm(handle, code, size, 0x1000, 0, &insn);
+        size_t count = cs_disasm(handle, code, size, 0, 0, &insn);
         if (count == 0)
             throw std::runtime_error("disassembly failed");
 

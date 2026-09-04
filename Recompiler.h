@@ -80,6 +80,8 @@ public:
         const uint8_t* data = section->buffer().data();
         const size_t size = section->buffer().size();
 
+
+
         return {
             disassemble(data, size),
             bytes_to_hex(data, size)
@@ -357,8 +359,7 @@ private:
 
         if (!condition)
             throw std::runtime_error(
-                "ConditionalJumpStatement requires a "
-                "BinaryExpression condition");
+                "ConditionalJumpStatement requires a BinaryExpression condition");
 
         auto* left =
             dynamic_cast<Value*>(
@@ -372,24 +373,38 @@ private:
             throw std::runtime_error(
                 "Condition operands must be Value");
 
-        asmjit::Label label =
-            resolve_target(
-                cjump->target,
-                assembler);
-
         const auto cc =
-            to_cond_code(
-                condition->operation());
+            to_cond_code(condition->operation());
 
         auto* flag =
             dynamic_cast<RegValue*>(left);
 
         if (flag && is_flag_reg(flag->reg)) {
+            uint64_t offset = assembler.offset();
+
+            int64_t rel =
+                static_cast<int64_t>(cjump->target) -
+                static_cast<int64_t>(offset + 6);
+
+            uint32_t rel32 =
+                static_cast<uint32_t>(rel);
+
+            uint8_t opcode0 = 0x0F;
+            uint8_t opcode1 =
+                0x80 + static_cast<uint8_t>(cc);
+
             check(
-                assembler.j(
-                    cc,
-                    label),
-                "AsmJit failed to emit conditional JMP");
+                assembler.db(opcode0),
+                "Failed to emit Jcc opcode");
+
+            check(
+                assembler.db(opcode1),
+                "Failed to emit Jcc opcode");
+
+            check(
+                assembler.dd(rel32),
+                "Failed to emit Jcc displacement");
+
             return;
         }
 
@@ -400,12 +415,17 @@ private:
                 operand(right)),
             "AsmJit failed to emit CMP");
 
+        asmjit::Label label =
+            resolve_target(
+                cjump->target,
+                assembler);
+
         check(
-            assembler.j(
-                cc,
-                label),
+            assembler.j(cc, label),
             "AsmJit failed to emit conditional JMP");
     }
+
+
 
     bool is_flag_reg(Reg r)
     {
