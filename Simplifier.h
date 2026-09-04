@@ -140,6 +140,17 @@ private:
                 }
             }
 
+
+            if (binary->operation() == Operation::Sub) {
+
+            if (same_value(
+                        binary->left.get(),
+                        binary->right.get())) {
+
+                            expr = std::make_unique<ImmValue>(0);
+                            return;
+                        }
+            }
             return;
         }
 
