@@ -594,6 +594,16 @@ private:
 
                 return;
             }
+            if (unary->operation() == Operation::Neg) {
+                emit_unary(
+                    assembler,
+                    asmjit::x86::Inst::kIdNeg,
+                    dst,
+                    operand(value));
+
+                return;
+            }
+
 
             throw std::runtime_error(
                 "Unsupported unary operation");

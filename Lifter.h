@@ -117,6 +117,13 @@ public:
         emit_assignment_or_store(std::move(dst), std::move(expr), ir);
     }
 
+    
+    void emit_operation(const cs_x86& x86, Operation op, IR& ir) {
+        auto src = operand(x86.operands[0]);
+        auto src_clone = src->clone();
+        auto expr = std::make_unique<UnaryExpression>(op, std::move(src));
+        new_assign(std::move(src_clone), std::move(expr), ir);
+    }
     void emit_stack_push(std::unique_ptr<Value> src, IR& ir) {
         auto rsp = std::make_unique<RegValue>(Reg::RSP);
         auto sub_expr = std::make_unique<BinaryExpression>(
@@ -290,6 +297,14 @@ public:
         lifter.emit_binary_operation(x86, op, ir);
     }
 };
+class UnaryOpHandler : public InstructionHandler {
+    Operation op;
+public:
+    explicit UnaryOpHandler(Operation op) : op(op) {}
+    void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
+        lifter.emit_operation(x86, op, ir);
+    }
+};
 
 class MovHandler : public InstructionHandler {
 public:
@@ -390,6 +405,7 @@ inline void Lifter::register_handlers() {
     handlers[X86_INS_LEA]    = std::make_unique<LeaHandler>();
     handlers[X86_INS_POPFQ]  = std::make_unique<PopfqHandler>();
     handlers[X86_INS_ADD]    = std::make_unique<BinaryOpHandler>(Operation::Add);
+    handlers[X86_INS_NEG]    = std::make_unique<UnaryOpHandler>(Operation::Neg);
     handlers[X86_INS_SUB]    = std::make_unique<BinaryOpHandler>(Operation::Sub);
     handlers[X86_INS_XOR]    = std::make_unique<BinaryOpHandler>(Operation::BitXor);
     handlers[X86_INS_SHR]    = std::make_unique<BinaryOpHandler>(Operation::Shr);
