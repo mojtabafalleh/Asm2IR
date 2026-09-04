@@ -2,6 +2,7 @@
 #include "Lifter.h"
 #include <ostream>
 #include "Recompiler.h"
+#include "Simplifier.h"
 
 #include <vector>
 #include <string>
@@ -36,8 +37,12 @@ int main() {
         code.size()
     );
 
+    Simplifier simplifier;
+    simplifier.simplify(ir);
 
-    printf("%s", ir.statements_str().c_str());
+
+    std::cout << "\n=== IR ===\n";
+    std::cout << ir.statements_str() << std::endl;
 
     Recompiler rc;
     auto result = rc.compile(ir);

@@ -28,7 +28,23 @@ public:
 
             asmjit::x86::Assembler assembler(&code);
 
-            for (const auto& stmt : ir.statements) {
+            const auto& stmts = ir.statements;
+
+            for (size_t i = 0; i < stmts.size(); ++i) {
+
+                // The Lifter expands PUSH/POP/PUSHFQ/POPFQ into two
+                // separate statements (an RSP adjustment + a stack
+                // memory access). Before falling back to generic
+                // per-statement codegen, try to recognize that
+                // two-statement shape here and re-fuse it back into
+                // a single push/pop/pushfq/popfq instruction.
+                if (i + 1 < stmts.size() &&
+                    emit_push_pop(assembler, stmts[i].get(), stmts[i + 1].get())) {
+                    ++i;
+                    continue;
+                }
+
+                const auto& stmt = stmts[i];
 
                 if (auto* assign = dynamic_cast<AssignStatement*>(stmt.get())) {
                     auto* dst = assign->dst.get();
@@ -72,6 +88,39 @@ public:
                                     err = assembler.emit(asmjit::x86::Inst::kIdMov, dst_operand, left_operand);
                                     if (err == asmjit::kErrorOk) {
                                         err = assembler.emit(asmjit::x86::Inst::kIdSub, dst_operand, right_operand);
+                                    }
+                                }
+                                break;
+
+                            case Operation::BitXor:
+                                if (dst_operand == left_operand) {
+                                    err = assembler.emit(asmjit::x86::Inst::kIdXor, dst_operand, right_operand);
+                                } else {
+                                    err = assembler.emit(asmjit::x86::Inst::kIdMov, dst_operand, left_operand);
+                                    if (err == asmjit::kErrorOk) {
+                                        err = assembler.emit(asmjit::x86::Inst::kIdXor, dst_operand, right_operand);
+                                    }
+                                }
+                                break;
+
+                            case Operation::Shr:
+                                if (dst_operand == left_operand) {
+                                    err = assembler.emit(asmjit::x86::Inst::kIdShr, dst_operand, right_operand);
+                                } else {
+                                    err = assembler.emit(asmjit::x86::Inst::kIdMov, dst_operand, left_operand);
+                                    if (err == asmjit::kErrorOk) {
+                                        err = assembler.emit(asmjit::x86::Inst::kIdShr, dst_operand, right_operand);
+                                    }
+                                }
+                                break;
+
+                            case Operation::Rcr:
+                                if (dst_operand == left_operand) {
+                                    err = assembler.emit(asmjit::x86::Inst::kIdRcr, dst_operand, right_operand);
+                                } else {
+                                    err = assembler.emit(asmjit::x86::Inst::kIdMov, dst_operand, left_operand);
+                                    if (err == asmjit::kErrorOk) {
+                                        err = assembler.emit(asmjit::x86::Inst::kIdRcr, dst_operand, right_operand);
                                     }
                                 }
                                 break;
@@ -188,6 +237,165 @@ public:
         }
 
 private:
+
+    // --------------------
+    // PUSH / POP / PUSHFQ / POPFQ fusion
+    // --------------------
+    //
+    // The Lifter never emits a single "push"/"pop" statement -- it
+    // always expands them into two statements (see Lifter.h):
+    //
+    //   PUSH src / PUSHFQ:
+    //     rsp = rsp - 8
+    //     [rsp] = src            (src == RFLAGS for PUSHFQ)
+    //
+    //   POP dst / POPFQ:
+    //     dst = [rsp]            (dst == RFLAGS for POPFQ)
+    //     rsp = rsp + 8
+    //
+    // Compiling that literally would work (mov/sub/mov, or
+    // mov/add), but it's wasteful and doesn't round-trip back to a
+    // real push/pop. So before emitting generic code for `first`,
+    // we check whether `first` + `second` together match one of
+    // these two shapes, and if so emit the single real instruction
+    // instead. Returns true (and emits code) on a match; false (and
+    // emits nothing) otherwise, in which case the caller falls back
+    // to normal per-statement codegen for `first` alone.
+    bool emit_push_pop(
+        asmjit::x86::Assembler& assembler,
+        Statement* first,
+        Statement* second
+    ) {
+        if (try_emit_push(assembler, first, second))
+            return true;
+
+        if (try_emit_pop(assembler, first, second))
+            return true;
+
+        return false;
+    }
+
+    // rsp = rsp - 8 ; [rsp] = src  ->  push src   (or pushfq if src == rflags)
+
+    bool try_emit_push(
+        asmjit::x86::Assembler& assembler,
+        Statement* first,
+        Statement* second
+    ) {
+        auto* assign = dynamic_cast<AssignStatement*>(first);
+        auto* store = dynamic_cast<StoreStatement*>(second);
+
+        if (!assign || !store)
+            return false;
+
+        if (!is_reg(assign->dst.get(), Reg::RSP))
+            return false;
+
+        if (!is_rsp_adjust(assign->value.get(), Operation::Sub, 8))
+            return false;
+
+        auto* address = dynamic_cast<Value*>(store->address.get());
+        if (!address || !is_stack_top(address))
+            return false;
+
+        auto* src = dynamic_cast<Value*>(store->value.get());
+
+        if (!src)
+            return false;
+
+        asmjit::Error err;
+
+        if (is_reg(src, Reg::RFLAGS)) {
+            err = assembler.emit(asmjit::x86::Inst::kIdPushfq);
+        } else {
+            err = assembler.emit(asmjit::x86::Inst::kIdPush, operand(src));
+        }
+
+        if (err != asmjit::kErrorOk)
+            throw std::runtime_error("AsmJit failed to emit PUSH");
+
+        return true;
+    }
+
+    bool try_emit_pop(
+        asmjit::x86::Assembler& assembler,
+        Statement* first,
+        Statement* second
+    ) {
+        auto* assign1 = dynamic_cast<AssignStatement*>(first);
+        auto* assign2 = dynamic_cast<AssignStatement*>(second);
+
+        if (!assign1 || !assign2)
+            return false;
+
+        auto* value = dynamic_cast<Value*>(assign1->value.get());
+        if (!value || !is_stack_top(value))
+            return false;
+
+        if (!is_reg(assign2->dst.get(), Reg::RSP))
+            return false;
+
+        if (!is_rsp_adjust(assign2->value.get(), Operation::Add, 8))
+            return false;
+
+        Value* dst = assign1->dst.get();
+
+        if (!dst)
+            return false;
+
+        asmjit::Error err;
+
+        if (is_reg(dst, Reg::RFLAGS)) {
+            err = assembler.emit(asmjit::x86::Inst::kIdPopfq);
+        } else {
+            err = assembler.emit(asmjit::x86::Inst::kIdPop, operand(dst));
+        }
+
+        if (err != asmjit::kErrorOk)
+            throw std::runtime_error("AsmJit failed to emit POP");
+
+        return true;
+    }
+
+
+    // True if `value` is a RegValue naming exactly `reg`.
+    bool is_reg(Value* value, Reg reg) {
+        auto* r = dynamic_cast<RegValue*>(value);
+        return r && r->reg == reg;
+    }
+
+    // True if `expr` is `BinaryExpression(op, rsp, imm)` where imm
+    // == amount, e.g. is_rsp_adjust(expr, Operation::Sub, 8) matches
+    // "rsp - 8".
+    bool is_rsp_adjust(Expression* expr, Operation op, uint64_t amount) {
+        auto* binary = dynamic_cast<BinaryExpression*>(expr);
+
+        if (!binary || binary->operation() != op)
+            return false;
+
+        auto* left = dynamic_cast<Value*>(binary->left.get());
+        auto* right = dynamic_cast<Value*>(binary->right.get());
+
+        if (!left || !right)
+            return false;
+
+        auto* imm = dynamic_cast<ImmValue*>(right);
+
+        return is_reg(left, Reg::RSP) && imm && imm->value == amount;
+    }
+
+    // True if `value` is exactly "[rsp]" -- an 8-byte memory access
+    // based on RSP alone, no index, no displacement -- i.e. the
+    // current stack top.
+    bool is_stack_top(Value* value) {
+        auto* mem = dynamic_cast<MemoryValue*>(value);
+
+        return mem &&
+               mem->size == 8 &&
+               mem->displacement == 0 &&
+               !mem->index &&
+               is_reg(mem->base.get(), Reg::RSP);
+    }
 
     // Convert an IR Value (register/immediate/memory) into an
     // AsmJit operand. Throws on null or unsupported Value kinds.

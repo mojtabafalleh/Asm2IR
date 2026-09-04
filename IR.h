@@ -1,7 +1,7 @@
 #pragma once
 
 #include "expression.h"
-#include "statement.h"
+#include "Statement.h"
 #include <vector>
 #include <sstream>
 #include <string>
@@ -310,12 +310,18 @@ private:
     // Render a leaf Value node (register, immediate, or memory).
     // Note: duplicates formatting logic already present on
     // RegValue/MemoryValue instead of calling their own methods.
+    //
+    // The one exception is registers: we use RegValue::display_name()
+    // instead of register_name(), so the access width is visible
+    // right in the IR text, e.g. "rax" for a 64-bit access vs
+    // "rax:32" for `mov eax, ...`. Widths always come from the
+    // Lifter, which fills them in from Capstone's operand size.
     std::string value_str(Value* value) const {
         if (!value)
             return "?";
 
         if (auto* reg = dynamic_cast<RegValue*>(value))
-            return reg->register_name();
+            return reg->display_name();
 
         if (auto* imm = dynamic_cast<ImmValue*>(value)) {
             std::stringstream ss;

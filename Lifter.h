@@ -56,8 +56,15 @@ public:
         switch (op.type) {
 
         case X86_OP_REG:
+            // op.size is Capstone's operand width in bytes (1/2/4/8
+            // for al/ax/eax/rax, ...). We only keep a canonical
+            // 64-bit Reg identity, so the actual access width has
+            // to be carried separately on RegValue::width, or a
+            // "mov eax, ..." would be indistinguishable from
+            // "mov rax, ..." once lifted.
             return std::make_unique<RegValue>(
-                reg(op.reg)
+                reg(op.reg),
+                static_cast<uint8_t>(op.size * 8)
             );
 
         case X86_OP_IMM:

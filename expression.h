@@ -104,7 +104,7 @@ public:
 
 // A single machine/flag register reference.
 //
-// `reg` is always the canonical 64-bit identity (Reg::RAX, ...) —
+// `reg` is always the canonical 64-bit identity (Reg::RAX, ...) ?
 // there's no separate enumerator for eax/ax/al. `width` records
 // which sub-register an instruction actually touched, in bits
 // (8/16/32/64). This keeps Reg small while still letting the
