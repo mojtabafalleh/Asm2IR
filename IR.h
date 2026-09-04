@@ -24,36 +24,25 @@ public:
 
     uint64_t next_id = 0;
 
-    uint64_t allocate_assign_id() {
-        return ++next_id;
-    }
+    uint64_t allocate_assign_id() { return ++next_id; }
 
-    void add(std::unique_ptr<Statement> stmt) {
-        statements.push_back(std::move(stmt));
-    }
+    void add(std::unique_ptr<Statement> stmt) { statements.push_back(std::move(stmt)); }
 
     Value* get_assign_dst(uint64_t id) const {
         auto it = assign_map.find(id);
-        if (it != assign_map.end())
-            return it->second->dst.get();
-        return nullptr;
+        return it != assign_map.end() ? it->second->dst.get() : nullptr;
     }
 
     AssignStatement* get_assign_statement(uint64_t id) const {
         auto it = assign_map.find(id);
-        if (it != assign_map.end())
-            return it->second;
-        return nullptr;
+        return it != assign_map.end() ? it->second : nullptr;
     }
 
     std::string assign_dst_name(uint64_t id) const {
         auto* dst = get_assign_dst(id);
         if (!dst) return "?";
-        if (auto* reg = dynamic_cast<RegValue*>(dst))
-            return reg->register_name();
-        if (auto* mem = dynamic_cast<MemoryValue*>(dst))
-            return "mem";
-        return "?";
+        if (auto* reg = dynamic_cast<RegValue*>(dst)) return reg->register_name();
+        return dynamic_cast<MemoryValue*>(dst) ? "mem" : "?";
     }
 
     std::string expression_str(Expression* expr) const {
@@ -62,105 +51,93 @@ public:
         if (auto* value = dynamic_cast<Value*>(expr))
             return value_str(value);
 
-        if (auto* binary = dynamic_cast<BinaryExpression*>(expr)) {
-            const std::string left = expression_str(binary->left.get());
-            const std::string right = expression_str(binary->right.get());
-            switch (binary->operation()) {
-                case Operation::Add: return "Add(" + left + ", " + right + ")";
-                case Operation::Sub: return "Sub(" + left + ", " + right + ")";
-                case Operation::Mul: return "Mul(" + left + ", " + right + ")";
-                case Operation::Div: return "Div(" + left + ", " + right + ")";
-                case Operation::Mod: return "Mod(" + left + ", " + right + ")";
-                case Operation::Shl: return "Shl(" + left + ", " + right + ")";
-                case Operation::Shr: return "Shr(" + left + ", " + right + ")";
-                case Operation::Rcr: return "Rcr(" + left + ", " + right + ")";
-                case Operation::Sar: return "Sar(" + left + ", " + right + ")";
-                case Operation::Rol: return "Rol(" + left + ", " + right + ")";
-                case Operation::Ror: return "Ror(" + left + ", " + right + ")";
-                case Operation::Rcl: return "Rcl(" + left + ", " + right + ")";
-                case Operation::BitAnd: return "BitAnd(" + left + ", " + right + ")";
-                case Operation::BitOr: return "BitOr(" + left + ", " + right + ")";
-                case Operation::BitXor: return "BitXor(" + left + ", " + right + ")";
-                case Operation::LogicalAnd: return "LogicalAnd(" + left + ", " + right + ")";
-                case Operation::LogicalOr: return "LogicalOr(" + left + ", " + right + ")";
-                case Operation::Eq: return "Eq(" + left + ", " + right + ")";
-                case Operation::Ne: return "Ne(" + left + ", " + right + ")";
-                case Operation::Lt: return "Lt(" + left + ", " + right + ")";
-                case Operation::Le: return "Le(" + left + ", " + right + ")";
-                case Operation::Gt: return "Gt(" + left + ", " + right + ")";
-                case Operation::Ge: return "Ge(" + left + ", " + right + ")";
-                default: return "?";
-            }
-        }
+        if (auto* binary = dynamic_cast<BinaryExpression*>(expr))
+            return wrap(binary_op_name(binary->operation()),
+                        expression_str(binary->left.get()), expression_str(binary->right.get()));
 
-        if (auto* unary = dynamic_cast<UnaryExpression*>(expr)) {
-            const std::string operand = expression_str(unary->operand.get());
-            switch (unary->operation()) {
-                case Operation::Load: return "Load(" + operand + ")";
-                case Operation::Neg: return "Neg(" + operand + ")";
-                case Operation::BitNot: return "BitNot(" + operand + ")";
-                case Operation::LogicalNot: return "LogicalNot(" + operand + ")";
-                default: return "?";
-            }
-        }
+        if (auto* unary = dynamic_cast<UnaryExpression*>(expr))
+            return wrap(unary_op_name(unary->operation()), expression_str(unary->operand.get()));
 
-        if (auto* cond = dynamic_cast<ConditionalExpression*>(expr)) {
-            return "Conditional( " +
-                   expression_str(cond->condition.get()) + " ? " +
+        if (auto* cond = dynamic_cast<ConditionalExpression*>(expr))
+            return "Conditional( " + expression_str(cond->condition.get()) + " ? " +
                    expression_str(cond->true_expr.get()) + ": " +
                    expression_str(cond->false_expr.get()) + " ) ";
-        }
 
         return "?";
     }
 
     std::string statement_str(Statement* stmt) const {
         if (!stmt) return "?";
-        if (auto* assign = dynamic_cast<AssignStatement*>(stmt)) {
-            return "Assign(" +
-                   expression_str(assign->dst.get()) +
-                   ", " +
-                   expression_str(assign->value.get()) +
-                   ")";
-        }
-        if (auto* store = dynamic_cast<StoreStatement*>(stmt)) {
-            return "Store(" +
-                   expression_str(store->address.get()) +
-                   ", " +
-                   expression_str(store->value.get()) +
-                   ")";
-        }
-        if (auto* jump = dynamic_cast<JumpStatement*>(stmt)) {
+
+        if (auto* assign = dynamic_cast<AssignStatement*>(stmt))
+            return "Assign(" + expression_str(assign->dst.get()) + ", " + expression_str(assign->value.get()) + ")";
+        if (auto* store = dynamic_cast<StoreStatement*>(stmt))
+            return "Store(" + expression_str(store->address.get()) + ", " + expression_str(store->value.get()) + ")";
+        if (auto* jump = dynamic_cast<JumpStatement*>(stmt))
             return "Jump(" + addr_str(jump->target) + ")";
-        }
-        if (auto* cjump = dynamic_cast<ConditionalJumpStatement*>(stmt)) {
-            return "JumpIf(" +
-                   expression_str(cjump->condition.get()) +
-                   ", " + addr_str(cjump->target) + ")";
-        }
-        if (auto* call = dynamic_cast<CallStatement*>(stmt)) {
+        if (auto* cjump = dynamic_cast<ConditionalJumpStatement*>(stmt))
+            return "JumpIf(" + expression_str(cjump->condition.get()) + ", " + addr_str(cjump->target) + ")";
+        if (auto* call = dynamic_cast<CallStatement*>(stmt))
             return "Call(" + addr_str(call->target) + ")";
-        }
-        if (dynamic_cast<ReturnStatement*>(stmt)) {
+        if (dynamic_cast<ReturnStatement*>(stmt))
             return "Return()";
-        }
-        if (auto* interrupt = dynamic_cast<InterruptStatement*>(stmt)) {
-            return "Interrupt(" +
-                   std::to_string(static_cast<unsigned>(interrupt->vector)) +
-                   ")";
-        }
+        if (auto* interrupt = dynamic_cast<InterruptStatement*>(stmt))
+            return "Interrupt(" + std::to_string(static_cast<unsigned>(interrupt->vector)) + ")";
+
         return "?";
     }
 
     std::string statements_str() const {
         std::stringstream ss;
-        for (const auto& stmt : statements) {
+        for (const auto& stmt : statements)
             ss << statement_str(stmt.get()) << "\n";
-        }
         return ss.str();
     }
 
 private:
+    // These two used to be full ~20-case switch statements duplicated
+    // inline inside expression_str, just to turn an Operation into the
+    // word used in "Add(...)"/"Neg(...)"-style debug output. Kept as
+    // two separate tables (rather than one shared one) because
+    // Binary/UnaryExpression each only ever carry a subset of
+    // Operation, and merging them would silently accept an operator
+    // that was never valid for that node kind.
+    static const char* binary_op_name(Operation op) {
+        switch (op) {
+            case Operation::Add: return "Add";       case Operation::Sub: return "Sub";
+            case Operation::Mul: return "Mul";       case Operation::Div: return "Div";
+            case Operation::Mod: return "Mod";       case Operation::Shl: return "Shl";
+            case Operation::Shr: return "Shr";       case Operation::Rcr: return "Rcr";
+            case Operation::Sar: return "Sar";       case Operation::Rol: return "Rol";
+            case Operation::Ror: return "Ror";       case Operation::Rcl: return "Rcl";
+            case Operation::BitAnd: return "BitAnd"; case Operation::BitOr: return "BitOr";
+            case Operation::BitXor: return "BitXor";
+            case Operation::LogicalAnd: return "LogicalAnd";
+            case Operation::LogicalOr: return "LogicalOr";
+            case Operation::Eq: return "Eq"; case Operation::Ne: return "Ne";
+            case Operation::Lt: return "Lt"; case Operation::Le: return "Le";
+            case Operation::Gt: return "Gt"; case Operation::Ge: return "Ge";
+            default: return nullptr;
+        }
+    }
+
+    static const char* unary_op_name(Operation op) {
+        switch (op) {
+            case Operation::Load: return "Load";
+            case Operation::Neg: return "Neg";
+            case Operation::BitNot: return "BitNot";
+            case Operation::LogicalNot: return "LogicalNot";
+            default: return nullptr;
+        }
+    }
+
+    static std::string wrap(const char* name, const std::string& a) {
+        return name ? std::string(name) + "(" + a + ")" : "?";
+    }
+    static std::string wrap(const char* name, const std::string& a, const std::string& b) {
+        return name ? std::string(name) + "(" + a + ", " + b + ")" : "?";
+    }
+
     std::string addr_str(uint64_t addr) const {
         std::stringstream ss;
         ss << "0x" << std::hex << std::uppercase << addr;
@@ -169,13 +146,16 @@ private:
 
     std::string value_str(Value* value) const {
         if (!value) return "?";
+
         if (auto* reg = dynamic_cast<RegValue*>(value))
             return reg->display_name();
+
         if (auto* imm = dynamic_cast<ImmValue*>(value)) {
             std::stringstream ss;
             ss << "0x" << std::hex << std::uppercase << imm->value;
             return ss.str();
         }
+
         if (auto* mem = dynamic_cast<MemoryValue*>(value)) {
             std::stringstream ss;
             ss << "[";
@@ -187,19 +167,12 @@ private:
             if (mem->index) {
                 if (!first) ss << " + ";
                 ss << value_str(mem->index.get());
-                if (mem->scale != 1)
-                    ss << "*" << static_cast<int>(mem->scale);
+                if (mem->scale != 1) ss << "*" << static_cast<int>(mem->scale);
                 first = false;
             }
             if (mem->displacement != 0) {
-                if (!first) {
-                    if (mem->displacement > 0)
-                        ss << " + ";
-                    else
-                        ss << " - ";
-                }
-                ss << "0x" << std::hex << std::uppercase
-                   << std::llabs(mem->displacement);
+                if (!first) ss << (mem->displacement > 0 ? " + " : " - ");
+                ss << "0x" << std::hex << std::uppercase << std::llabs(mem->displacement);
             }
             ss << "]";
             return ss.str();
