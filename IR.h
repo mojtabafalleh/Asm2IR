@@ -105,10 +105,10 @@ public:
         }
 
         if (auto* cond = dynamic_cast<ConditionalExpression*>(expr)) {
-            return "Conditional(" +
-                   expression_str(cond->condition.get()) + ", " +
-                   expression_str(cond->true_expr.get()) + ", " +
-                   expression_str(cond->false_expr.get()) + ")";
+            return "Conditional( " +
+                   expression_str(cond->condition.get()) + " ? " +
+                   expression_str(cond->true_expr.get()) + ": " +
+                   expression_str(cond->false_expr.get()) + " ) ";
         }
 
         return "?";

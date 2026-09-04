@@ -173,26 +173,85 @@ public:
     // Conditional jump: the "not taken" case needs no explicit target --
     // the IR is a flat, in-order statement stream, so falling through
     // simply means "go to the next statement", exactly like real x86.
-    void emit_conditional_jump(const cs_x86& x86, IR& ir, x86_insn insn_id) {
-        if (x86.op_count < 1) throw std::runtime_error("invalid conditional jump");
-        auto target = static_cast<uint64_t>(x86.operands[0].imm);
-        auto condition = make_condition(insn_id);
-        ir.add(std::make_unique<ConditionalJumpStatement>(std::move(condition), target));
+    void emit_conditional_jump(
+        const cs_x86& x86,
+        IR& ir,
+        x86_insn insn_id
+    ) {
+
+        
+        if (x86.op_count != 1)
+            throw std::runtime_error(
+                "invalid conditional jump"
+            );
+
+        if (x86.operands[0].type != X86_OP_IMM)
+            throw std::runtime_error(
+                "conditional jump target must be immediate"
+            );
+
+        const uint64_t target =
+            static_cast<uint64_t>(x86.operands[0].imm);
+
+
+        auto condition =
+            make_condition(insn_id);
+
+        auto true_expr =
+            std::make_unique<ImmValue>(
+                static_cast<int64_t>(target)
+            );
+
+        auto false_expr =
+            std::make_unique<BinaryExpression>(
+                Operation::Add,
+                read_reg(Reg::RIP),
+                std::make_unique<ImmValue>(
+                    static_cast<int64_t>(x86.addr_size)
+                )
+            );
+
+        auto next_rip =
+            std::make_unique<ConditionalExpression>(
+                std::move(condition),
+                std::move(true_expr),
+                std::move(false_expr)
+            );
+
+        auto rip =
+            std::make_unique<RegValue>(Reg::RIP);
+
+        new_assign(
+            std::move(rip),
+            std::move(next_rip),
+            ir
+        );
     }
 
     // Direct call: only X86_OP_IMM targets are supported for now.
     // Indirect calls (register/memory targets) are a natural place to
     // extend this later.
     void emit_call(const cs_x86& x86, IR& ir) {
-        if (x86.op_count < 1) throw std::runtime_error("invalid call");
-        if (x86.operands[0].type != X86_OP_IMM)
-            throw std::runtime_error("only direct calls are supported");
+        if (x86.op_count < 1) throw std::runtime_error("invalid conditional jump");
         auto target = static_cast<uint64_t>(x86.operands[0].imm);
-        ir.add(std::make_unique<CallStatement>(target));
+        auto rsp = std::make_unique<RegValue>(Reg::RSP);
+        auto sub_expr = std::make_unique<BinaryExpression>(
+            Operation::Sub, read_reg(Reg::RSP), std::make_unique<ImmValue>(8));
+        new_assign(std::move(rsp), std::move(sub_expr), ir);
+
+        auto mem_dst = std::make_unique<MemoryValue>(8, std::make_unique<RegValue>(Reg::RSP), nullptr, 1, 0);
+        emit_assignment_or_store(std::move(mem_dst), std::make_unique<RegValue>(Reg::RIP), ir);
     }
 
+
     void emit_return(IR& ir) {
-        ir.add(std::make_unique<ReturnStatement>());
+        auto mem_src = std::make_unique<MemoryValue>(8, std::make_unique<RegValue>(Reg::RSP), nullptr, 1, 0);
+        emit_assignment_or_store(std::make_unique<RegValue>(Reg::RIP), std::move(mem_src), ir);
+
+        auto rsp = std::make_unique<RegValue>(Reg::RSP);
+        auto add_expr = std::make_unique<BinaryExpression>(
+            Operation::Add, read_reg(Reg::RSP), std::make_unique<ImmValue>(8));
+        new_assign(std::move(rsp), std::move(add_expr), ir);
     }
 
     IR lift(const uint8_t* code, size_t size) {
@@ -304,7 +363,7 @@ class ConditionalJumpHandlerWithInsn : public InstructionHandler {
 public:
     explicit ConditionalJumpHandlerWithInsn(x86_insn id) : insn_id(id) {}
     void lift(const cs_x86& x86, Lifter& lifter, IR& ir) const override {
-        lifter.emit_conditional_jump(x86, ir, insn_id);
+        lifter.emit_conditional_jump(x86, ir,insn_id);
     }
 };
 
