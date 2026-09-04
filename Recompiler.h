@@ -405,7 +405,7 @@ private:
             throw std::runtime_error("null Value");
 
         if (auto* reg = dynamic_cast<RegValue*>(value))
-            return to_reg(reg->reg);
+            return to_reg(reg->reg, reg->width);
 
         if (auto* imm = dynamic_cast<ImmValue*>(value))
             return asmjit::Imm(imm->value);
@@ -430,12 +430,12 @@ private:
 
         auto base_reg =
             base
-                ? to_reg(base->reg)
+                ? to_reg(base->reg, 64)
                 : asmjit::x86::Gp{};
 
         auto index_reg =
             index
-                ? to_reg(index->reg)
+                ? to_reg(index->reg, 64)
                 : asmjit::x86::Gp{};
 
         return asmjit::x86::ptr(
@@ -447,10 +447,33 @@ private:
         );
     }
 
-    // Map our Reg enum to an AsmJit 64-bit GP register.
-    // Throws for anything without a direct GP mapping (e.g. RIP,
-    // NONE, or flag registers).
-    asmjit::x86::Gp to_reg(Reg reg) {
+    // Map our Reg enum + an access width (8/16/32/64 bits) to the
+    // matching AsmJit GP register -- e.g. (Reg::RAX, 32) -> eax,
+    // (Reg::RAX, 8) -> al. This is what makes a lifted `mov eax,
+    // ...` (RegValue{RAX, width=32}) recompile back to a real
+    // 32-bit `mov eax, ...` instead of always widening to `mov
+    // rax, ...`. Throws for anything without a direct GP mapping
+    // (e.g. RIP, NONE, or flag registers).
+    asmjit::x86::Gp to_reg(Reg reg, uint8_t width = 64) {
+
+        asmjit::x86::Gp reg64 = to_reg64(reg);
+
+        switch (width) {
+            case 8:  return reg64.r8Lo();
+            case 16: return reg64.r16();
+            case 32: return reg64.r32();
+            case 64: return reg64;
+
+            default:
+                throw std::runtime_error(
+                    "unsupported register width"
+                );
+        }
+    }
+
+    // The canonical 64-bit AsmJit register for a given Reg. Always
+    // full-width; to_reg() above narrows it down as needed.
+    asmjit::x86::Gp to_reg64(Reg reg) {
         switch (reg) {
             case Reg::RAX: return asmjit::x86::rax;
             case Reg::RBX: return asmjit::x86::rbx;

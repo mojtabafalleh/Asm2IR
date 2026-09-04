@@ -15,6 +15,7 @@ class Lifter {
     Reg reg(x86_reg r) {
         switch (r) {
             case X86_REG_RAX: return Reg::RAX;
+            case X86_REG_EAX: return Reg::RAX;
             case X86_REG_RBX: return Reg::RBX;
             case X86_REG_RCX: return Reg::RCX;
             case X86_REG_RDX: return Reg::RDX;
@@ -22,6 +23,13 @@ class Lifter {
             case X86_REG_RDI: return Reg::RDI;
             case X86_REG_RBP: return Reg::RBP;
             case X86_REG_RSP: return Reg::RSP;
+            case X86_REG_EBX: return Reg::RBX;
+            case X86_REG_ECX: return Reg::RCX;
+            case X86_REG_EDX: return Reg::RDX;
+            case X86_REG_ESI: return Reg::RSI;
+            case X86_REG_EDI: return Reg::RDI;
+            case X86_REG_EBP: return Reg::RBP;
+            case X86_REG_ESP: return Reg::RSP;
             case X86_REG_R8:  return Reg::R8;
             case X86_REG_R9:  return Reg::R9;
             case X86_REG_R10: return Reg::R10;
