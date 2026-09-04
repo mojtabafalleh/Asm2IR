@@ -40,6 +40,7 @@ enum class Operation {
     Add,
     Sub,
     Rcr,
+    Rcl,
     Mul,
     Div,
     Mod,

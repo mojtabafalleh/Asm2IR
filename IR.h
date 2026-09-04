@@ -131,6 +131,12 @@ public:
                            ", " +
                            right +
                            ")";
+                case Operation::Rcl:
+                    return "Rcl(" +
+                           left +
+                           ", " +
+                           right +
+                           ")";
 
                 case Operation::BitAnd:
                     return "BitAnd(" +

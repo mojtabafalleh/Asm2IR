@@ -124,6 +124,16 @@ public:
                                     }
                                 }
                                 break;
+                            case Operation::Rcl:
+                                if (dst_operand == left_operand) {
+                                    err = assembler.emit(asmjit::x86::Inst::kIdRcl, dst_operand, right_operand);
+                                } else {
+                                    err = assembler.emit(asmjit::x86::Inst::kIdMov, dst_operand, left_operand);
+                                    if (err == asmjit::kErrorOk) {
+                                        err = assembler.emit(asmjit::x86::Inst::kIdRcl, dst_operand, right_operand);
+                                    }
+                                }
+                                break;
 
                             default:
                                 throw std::runtime_error("Unsupported binary operation");

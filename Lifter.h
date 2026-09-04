@@ -12,36 +12,153 @@ class Lifter {
     // Map a Capstone 64-bit GP register id to our Reg enum.
     // Falls back to Reg::NONE for anything not in this list
     // (sub-registers like eax/ax/al, segment/xmm regs, etc.).
+
     Reg reg(x86_reg r) {
         switch (r) {
+            // ============================================================
+            // RAX
+            // ============================================================
             case X86_REG_RAX: return Reg::RAX;
             case X86_REG_EAX: return Reg::RAX;
+            case X86_REG_AX:  return Reg::RAX;
+            case X86_REG_AL:  return Reg::RAX;
+            case X86_REG_AH:  return Reg::RAX;
+
+            // ============================================================
+            // RBX
+            // ============================================================
             case X86_REG_RBX: return Reg::RBX;
-            case X86_REG_RCX: return Reg::RCX;
-            case X86_REG_RDX: return Reg::RDX;
-            case X86_REG_RSI: return Reg::RSI;
-            case X86_REG_RDI: return Reg::RDI;
-            case X86_REG_RBP: return Reg::RBP;
-            case X86_REG_RSP: return Reg::RSP;
             case X86_REG_EBX: return Reg::RBX;
+            case X86_REG_BX:  return Reg::RBX;
+            case X86_REG_BL:  return Reg::RBX;
+            case X86_REG_BH:  return Reg::RBX;
+
+            // ============================================================
+            // RCX
+            // ============================================================
+            case X86_REG_RCX: return Reg::RCX;
             case X86_REG_ECX: return Reg::RCX;
+            case X86_REG_CX:  return Reg::RCX;
+            case X86_REG_CL:  return Reg::RCX;
+            case X86_REG_CH:  return Reg::RCX;
+
+            // ============================================================
+            // RDX
+            // ============================================================
+            case X86_REG_RDX: return Reg::RDX;
             case X86_REG_EDX: return Reg::RDX;
+            case X86_REG_DX:  return Reg::RDX;
+            case X86_REG_DL:  return Reg::RDX;
+            case X86_REG_DH:  return Reg::RDX;
+
+            // ============================================================
+            // RSI
+            // ============================================================
+            case X86_REG_RSI: return Reg::RSI;
             case X86_REG_ESI: return Reg::RSI;
+            case X86_REG_SI:  return Reg::RSI;
+            case X86_REG_SIL: return Reg::RSI;
+
+            // ============================================================
+            // RDI
+            // ============================================================
+            case X86_REG_RDI: return Reg::RDI;
             case X86_REG_EDI: return Reg::RDI;
+            case X86_REG_DI:  return Reg::RDI;
+            case X86_REG_DIL: return Reg::RDI;
+
+            // ============================================================
+            // RBP
+            // ============================================================
+            case X86_REG_RBP: return Reg::RBP;
             case X86_REG_EBP: return Reg::RBP;
+            case X86_REG_BP:  return Reg::RBP;
+            case X86_REG_BPL: return Reg::RBP;
+
+            // ============================================================
+            // RSP
+            // ============================================================
+            case X86_REG_RSP: return Reg::RSP;
             case X86_REG_ESP: return Reg::RSP;
+            case X86_REG_SP:  return Reg::RSP;
+            case X86_REG_SPL: return Reg::RSP;
+
+            // ============================================================
+            // R8
+            // ============================================================
             case X86_REG_R8:  return Reg::R8;
+            case X86_REG_R8D: return Reg::R8;
+            case X86_REG_R8W: return Reg::R8;
+            case X86_REG_R8B: return Reg::R8;
+
+            // ============================================================
+            // R9
+            // ============================================================
             case X86_REG_R9:  return Reg::R9;
-            case X86_REG_R10: return Reg::R10;
-            case X86_REG_R11: return Reg::R11;
-            case X86_REG_R12: return Reg::R12;
-            case X86_REG_R13: return Reg::R13;
-            case X86_REG_R14: return Reg::R14;
-            case X86_REG_R15: return Reg::R15;
-            case X86_REG_RIP: return Reg::RIP;
-            default: return Reg::NONE;
+            case X86_REG_R9D: return Reg::R9;
+            case X86_REG_R9W: return Reg::R9;
+            case X86_REG_R9B: return Reg::R9;
+
+            // ============================================================
+            // R10
+            // ============================================================
+            case X86_REG_R10:  return Reg::R10;
+            case X86_REG_R10D: return Reg::R10;
+            case X86_REG_R10W: return Reg::R10;
+            case X86_REG_R10B: return Reg::R10;
+
+            // ============================================================
+            // R11
+            // ============================================================
+            case X86_REG_R11:  return Reg::R11;
+            case X86_REG_R11D: return Reg::R11;
+            case X86_REG_R11W: return Reg::R11;
+            case X86_REG_R11B: return Reg::R11;
+
+            // ============================================================
+            // R12
+            // ============================================================
+            case X86_REG_R12:  return Reg::R12;
+            case X86_REG_R12D: return Reg::R12;
+            case X86_REG_R12W: return Reg::R12;
+            case X86_REG_R12B: return Reg::R12;
+
+            // ============================================================
+            // R13
+            // ============================================================
+            case X86_REG_R13:  return Reg::R13;
+            case X86_REG_R13D: return Reg::R13;
+            case X86_REG_R13W: return Reg::R13;
+            case X86_REG_R13B: return Reg::R13;
+
+            // ============================================================
+            // R14
+            // ============================================================
+            case X86_REG_R14:  return Reg::R14;
+            case X86_REG_R14D: return Reg::R14;
+            case X86_REG_R14W: return Reg::R14;
+            case X86_REG_R14B: return Reg::R14;
+
+            // ============================================================
+            // R15
+            // ============================================================
+            case X86_REG_R15:  return Reg::R15;
+            case X86_REG_R15D: return Reg::R15;
+            case X86_REG_R15W: return Reg::R15;
+            case X86_REG_R15B: return Reg::R15;
+
+            // ============================================================
+            // Special registers
+            // ============================================================
+            case X86_REG_RIP:    return Reg::RIP;
+            case X86_REG_EFLAGS: return Reg::RFLAGS;
+
+            default:
+                return Reg::NONE;
         }
     }
+
+
 
 public:
     // Opens a Capstone x86-64 handle with instruction detail enabled.
@@ -317,6 +434,10 @@ public:
 
                 case X86_INS_RCR:
                     emit_binary_operation( x86, Operation::Rcr, ir);
+                    break;
+
+                case X86_INS_RCL:
+                    emit_binary_operation( x86, Operation::Rcl, ir);
                     break;
 
                  case X86_INS_SHR:
