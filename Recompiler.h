@@ -542,13 +542,63 @@ private:
                 temp),
             "AsmJit failed to emit MOV");
     }
+    void emit_unary(
+    asmjit::x86::Assembler& assembler,
+    asmjit::x86::Inst::Id id,
+    asmjit::Operand dst,
+    asmjit::Operand src)
+    {
+        if (dst == src) {
+            check(
+                assembler.emit(id, dst),
+                "AsmJit failed to emit unary instruction");
+            return;
+        }
 
+        check(
+            assembler.emit(
+                asmjit::x86::Inst::kIdMov,
+                dst,
+                src),
+            "AsmJit failed to emit MOV");
+
+        check(
+            assembler.emit(
+                id,
+                dst),
+            "AsmJit failed to emit unary instruction");
+    }
     void emit_write(
         asmjit::x86::Assembler& assembler,
         asmjit::Operand dst,
         Expression* expr,
         bool is_mem)
     {
+        if (auto* unary =
+                dynamic_cast<UnaryExpression*>(expr)) {
+
+            auto* value =
+                dynamic_cast<Value*>(
+                    unary->operand.get());
+
+            if (!value)
+                throw std::runtime_error(
+                    "Unary operand must be Value");
+
+            if (unary->operation() == Operation::LogicalNot) {
+                emit_unary(
+                    assembler,
+                    asmjit::x86::Inst::kIdNot,
+                    dst,
+                    operand(value));
+
+                return;
+            }
+
+            throw std::runtime_error(
+                "Unsupported unary operation");
+        }
+
         if (auto* binary =
                 dynamic_cast<BinaryExpression*>(expr)) {
 

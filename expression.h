@@ -38,6 +38,7 @@ enum class Operation {
 
     Add,
     Sub,
+    Not,
     Rcr,
     Rcl,
     Mul,

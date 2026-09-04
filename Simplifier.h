@@ -29,6 +29,19 @@ public:
     }
 
 private:
+    bool is_all_ones(uint64_t value, uint8_t width) const
+{
+    if (width == 0 || width > 64)
+        return false;
+
+    if (width == 64)
+        return value == UINT64_MAX;
+
+    const uint64_t mask =
+        (uint64_t(1) << width) - 1;
+
+    return value == mask;
+}
 
     void simplify_statement(Statement* stmt) {
         if (!stmt)
@@ -70,12 +83,32 @@ private:
             simplify_expr(binary->right);
 
             // Rule 1: X ^ X -> 0
-            if (binary->operation() == Operation::BitXor &&
-                same_value(binary->left.get(), binary->right.get())) {
+        if (binary->operation() == Operation::BitXor) {
+
+            auto* reg =
+                dynamic_cast<RegValue*>(binary->left.get());
+
+            auto* imm =
+                dynamic_cast<ImmValue*>(binary->right.get());
+
+            if (reg && imm &&
+                is_all_ones(imm->value, reg->width)) {
+
+                expr = std::make_unique<UnaryExpression>(
+                    Operation::LogicalNot,
+                    std::move(binary->left));
+
+                return;
+            }
+
+            if (same_value(
+                    binary->left.get(),
+                    binary->right.get())) {
 
                 expr = std::make_unique<ImmValue>(0);
                 return;
             }
+        }
 
             // Rule 2: X + (-C) -> X - C
             //
