@@ -12,6 +12,7 @@
 
 class Lifter {
 public:
+    RegisterFile regs;
     Lifter() {
         if (cs_open(CS_ARCH_X86, CS_MODE_64, &handle) != CS_ERR_OK)
             throw std::runtime_error("capstone initialization failed");
@@ -66,23 +67,50 @@ public:
     std::unique_ptr<Value> read_reg(Reg r, uint8_t width = 64) {
         return std::make_unique<RegValue>(r, width);
     }
-
+    void tag_reads(Expression* expr) {
+    if (!expr) return;
+    if (auto* reg = dynamic_cast<RegValue*>(expr)) {
+        regs.tag_read(*reg);
+        return;
+    }
+    if (auto* mem = dynamic_cast<MemoryValue*>(expr)) {
+        tag_reads(mem->base.get());
+        tag_reads(mem->index.get());
+        return;
+    }
+    if (dynamic_cast<ImmValue*>(expr)) return;
+    if (auto* un = dynamic_cast<UnaryExpression*>(expr)) { tag_reads(un->operand.get()); return; }
+    if (auto* bin = dynamic_cast<BinaryExpression*>(expr)) { tag_reads(bin->left.get()); tag_reads(bin->right.get()); return; }
+    if (auto* cond = dynamic_cast<ConditionalExpression*>(expr)) {
+        tag_reads(cond->condition.get());
+        tag_reads(cond->true_expr.get());
+        tag_reads(cond->false_expr.get());
+    }
+}
     void new_assign(std::unique_ptr<Value> dst, std::unique_ptr<Expression> value, IR& ir) {
+        tag_reads(value.get());
+        if (auto* reg = dynamic_cast<RegValue*>(dst.get()))
+            regs.tag_write(*reg);
+
         uint64_t id = ir.allocate_assign_id();
         ir.add(std::make_unique<AssignStatement>(id, std::move(dst), std::move(value)));
     }
 
     void emit_assignment_or_store(std::unique_ptr<Value> dst, std::unique_ptr<Expression> src, IR& ir) {
-        if (dst->category() == ExpressionCategory::Memory)
+        if (dst->category() == ExpressionCategory::Memory) {
+            tag_reads(dst.get());
+            tag_reads(src.get());
             ir.add(std::make_unique<StoreStatement>(std::move(dst), std::move(src)));
-        else
+        } else {
             new_assign(std::move(dst), std::move(src), ir);
+        }
     }
 
     void emit_binary_operation(const cs_x86& x86, Operation op, IR& ir) {
         auto dst = operand(x86.operands[0]);
         auto src = operand(x86.operands[1]);
-        auto expr = std::make_unique<BinaryExpression>(op, dst->clone(), std::move(src));
+        auto left_val = dst->clone();         
+        auto expr = std::make_unique<BinaryExpression>(op, std::move(left_val), std::move(src));
         emit_assignment_or_store(std::move(dst), std::move(expr), ir);
     }
 
@@ -163,6 +191,8 @@ public:
     }
 
     IR lift(const uint8_t* code, size_t size) {
+
+        regs.reset();
         cs_insn* insn;
         IR ir;
         size_t count = cs_disasm(handle, code, size, 0, 0, &insn);

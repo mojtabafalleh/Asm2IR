@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <stdexcept>
 #include <vector>
+#include <array>
 
 enum class Reg : uint16_t {
     RAX, RBX, RCX, RDX,
@@ -39,6 +40,7 @@ class RegValue; // fwd decl for Value::as_reg()
 
 class Value : public Expression {
 public:
+    int ssa_id = -1;
     ExpressionCategory category() const override { return ExpressionCategory::Value; }
     Operation operation() const override { return Operation::None; }
     virtual std::unique_ptr<Value> clone() const = 0;
@@ -50,7 +52,7 @@ public:
 
 class RegValue : public Value {
 public:
-    int SSA_id;
+
     Reg reg;
     uint8_t width;
 
@@ -77,13 +79,18 @@ public:
     }
 
     std::unique_ptr<Value> clone() const override {
-        return std::make_unique<RegValue>(reg, width);
+        auto v = std::make_unique<RegValue>(reg, width);
+        v->ssa_id = ssa_id;
+        return v;
     }
 
     std::string display_name() const {
-        if (width == 64 || !has_sub_widths()) return register_name();
         std::stringstream ss;
-        ss << register_name() << ":" << static_cast<unsigned>(width);
+        ss << register_name();
+        if (width != 64 && has_sub_widths())
+            ss << ":" << static_cast<unsigned>(width);
+        if (ssa_id >= 0)
+            ss << "[" << ssa_id << "]";
         return ss.str();
     }
 
@@ -99,6 +106,28 @@ private:
                 return false;
         }
     }
+};
+
+class RegisterFile {
+public:
+    RegisterFile() { versions.fill(-1); }
+
+    void reset() { versions.fill(-1); }
+
+
+    void tag_read(RegValue& reg) {
+        int v = versions[idx(reg.reg)];
+        reg.ssa_id = v < 0 ? 0 : v;
+    }
+
+
+    void tag_write(RegValue& reg) {
+        reg.ssa_id = ++versions[idx(reg.reg)];
+    }
+
+private:
+    static size_t idx(Reg r) { return static_cast<size_t>(r); }
+    std::array<int, static_cast<size_t>(Reg::NONE)> versions;
 };
 
 class ImmValue : public Value {
