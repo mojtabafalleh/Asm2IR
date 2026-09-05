@@ -38,5 +38,8 @@
     <ClInclude Include="Simplifier.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Registerast.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

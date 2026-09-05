@@ -133,6 +133,7 @@
     <ClInclude Include="expression.h" />
     <ClInclude Include="IR.h" />
     <ClInclude Include="Recompiler.h" />
+    <ClInclude Include="Registerast.h" />
     <ClInclude Include="Simplifier.h" />
     <ClInclude Include="Statement.h" />
   </ItemGroup>
