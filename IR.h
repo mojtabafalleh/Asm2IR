@@ -73,10 +73,6 @@ public:
             return "Assign(" + expression_str(assign->dst.get()) + ", " + expression_str(assign->value.get()) + ")";
         if (auto* store = dynamic_cast<StoreStatement*>(stmt))
             return "Store(" + expression_str(store->address.get()) + ", " + expression_str(store->value.get()) + ")";
-        if (auto* jump = dynamic_cast<JumpStatement*>(stmt))
-            return "Jump(" + addr_str(jump->target) + ")";
-        if (auto* cjump = dynamic_cast<ConditionalJumpStatement*>(stmt))
-            return "JumpIf(" + expression_str(cjump->condition.get()) + ", " + addr_str(cjump->target) + ")";
         if (auto* call = dynamic_cast<CallStatement*>(stmt))
             return "Call(" + addr_str(call->target) + ")";
         if (dynamic_cast<ReturnStatement*>(stmt))

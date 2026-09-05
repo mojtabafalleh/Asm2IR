@@ -39,7 +39,6 @@ private:
         if (!stmt) return;
         if (auto* assign = dynamic_cast<AssignStatement*>(stmt)) { simplify_expr(assign->value); return; }
         if (auto* store = dynamic_cast<StoreStatement*>(stmt)) { simplify_expr(store->value); return; }
-        if (auto* cjump = dynamic_cast<ConditionalJumpStatement*>(stmt)) { simplify_expr(cjump->condition); return; }
         // Jump / Call / Return / Interrupt carry no expressions to simplify.
     }
 

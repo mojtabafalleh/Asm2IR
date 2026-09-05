@@ -61,6 +61,14 @@ private:
         if (auto* assign = dynamic_cast<AssignStatement*>(stmt)) {
             if (!assign->dst || !assign->value)
                 throw std::runtime_error("Invalid AssignStatement");
+
+
+                if (is_reg(assign->dst.get(), Reg::RIP)) {
+                    emit_rip_assign(assembler, assign->value.get());
+                    return;
+                }
+
+
             emit_write(assembler, operand(assign->dst.get()), assign->value.get(), false);
             return;
         }
@@ -68,14 +76,6 @@ private:
             if (!store->address || !store->value)
                 throw std::runtime_error("Invalid StoreStatement");
             emit_write(assembler, operand(store->address.get()), store->value.get(), true);
-            return;
-        }
-        if (auto* jump = dynamic_cast<JumpStatement*>(stmt)) {
-            emit_jump(assembler, jump->target);
-            return;
-        }
-        if (auto* cjump = dynamic_cast<ConditionalJumpStatement*>(stmt)) {
-            emit_conditional_jump(assembler, cjump);
             return;
         }
         if (auto* call = dynamic_cast<CallStatement*>(stmt)) {
@@ -105,40 +105,53 @@ private:
         check(assembler.call(target), "AsmJit failed to emit CALL");
     }
 
-    /*
-     * ConditionalJumpStatement::condition is a BinaryExpression.
-     *
-     * There are two shapes it can take:
-     *
-     *   1) A real comparison between two values, e.g. Eq(rax, 5):
-     *          CMP left, right
-     *          Jcc target
-     *
-     *   2) A flag test, e.g. Eq(zf, 1) -- this is what the Lifter
-     *      produces for conditional jumps. `zf` here does NOT mean
-     *      "the register named zf"; it means "the zero flag, as left
-     *      by whatever instruction ran right before this jump". Flags
-     *      aren't real, readable GP registers, so there is nothing to
-     *      CMP -- the flag is already live, and the condition lowers
-     *      straight to the matching Jcc.
-     *
-     * The not-taken path needs no explicit jump either way: the caller
-     * (compile()) simply continues on to the next statement.
-     */
-    void emit_conditional_jump(asmjit::x86::Assembler& assembler, ConditionalJumpStatement* cjump) {
-        auto* condition = dynamic_cast<BinaryExpression*>(cjump->condition.get());
+    void emit_rip_assign(asmjit::x86::Assembler& assembler, Expression* value) {
+        if (auto* imm = dynamic_cast<ImmValue*>(value)) {
+            check(assembler.jmp(imm->value), "AsmJit failed to emit JMP");
+            return;
+        }
+
+        auto* cond_expr = dynamic_cast<ConditionalExpression*>(value);
+        if (!cond_expr)
+            throw std::runtime_error("Unsupported RIP assignment shape");
+
+        auto* target_imm = dynamic_cast<ImmValue*>(cond_expr->true_expr.get());
+        if (!target_imm)
+            throw std::runtime_error("Conditional RIP assignment must have an immediate true_expr (jump target)");
+
+        auto* condition = dynamic_cast<BinaryExpression*>(cond_expr->condition.get());
         if (!condition)
-            throw std::runtime_error("ConditionalJumpStatement requires a BinaryExpression condition");
+            throw std::runtime_error("RIP condition must be a BinaryExpression");
 
         auto* left = dynamic_cast<Value*>(condition->left.get());
         auto* right = dynamic_cast<Value*>(condition->right.get());
         if (!left || !right)
             throw std::runtime_error("Condition operands must be Value");
 
+        auto cc = to_cond_code(condition->operation());
+        auto target = target_imm->value;
+        auto* flag = dynamic_cast<RegValue*>(left);
+
+        if (flag && is_flag_reg(flag->reg)) {
+
+            check(assembler.j(cc, target), "AsmJit failed to emit conditional JMP");
+            return;
+        }
+
+
         check(assembler.emit(asmjit::x86::Inst::kIdCmp, operand(left), operand(right)),
-              "AsmJit failed to emit CMP");
-        check(assembler.j(to_cond_code(condition->operation()), cjump->target),
-              "AsmJit failed to emit conditional JMP");
+            "AsmJit failed to emit CMP");
+        check(assembler.j(cc, target), "AsmJit failed to emit conditional JMP");
+    }
+
+    bool is_flag_reg(Reg r) {
+        switch (r) {
+            case Reg::CF: case Reg::PF: case Reg::AF:
+            case Reg::ZF: case Reg::SF: case Reg::OF:
+                return true;
+            default:
+                return false;
+        }
     }
 
     asmjit::x86::CondCode to_cond_code(Operation op) {

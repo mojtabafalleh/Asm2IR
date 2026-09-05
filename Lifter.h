@@ -143,7 +143,7 @@ public:
     // jumps, so this becomes a single first-class JumpStatement.
     void emit_jump(const cs_x86& x86, IR& ir) {
         if (x86.op_count < 1) throw std::runtime_error("invalid jump");
-        ir.add(std::make_unique<JumpStatement>(static_cast<uint64_t>(x86.operands[0].imm)));
+        new_assign(std::make_unique<RegValue>(Reg::RIP),  std::make_unique<ImmValue>(x86.operands[0].imm), ir);
     }
 
     // Conditional jump: the "not taken" case needs no explicit target --
